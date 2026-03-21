@@ -21,37 +21,34 @@ Private API(잔고) 확인: `.env.example`을 참고해 `.env`에 키를 넣은 
 
 ## FastAPI + PostgreSQL
 
-1. DB 기동 (Docker):
+### Docker Compose (DB + API 한 번에)
 
-   ```bash
-   docker compose up -d
-   ```
+`db`와 `api`가 **`internal` 브리지 네트워크**에서만 서로 붙고, API는 `DATABASE_URL`에 서비스 이름 **`db`** 를 씁니다.
 
-2. `.env`에 `DATABASE_URL` 설정 (`.env.example` 참고). 예:
+```bash
+docker compose up -d --build
+```
 
-   `postgresql+asyncpg://autocoin:***REMOVED***@127.0.0.1:5432/autocoin`
+- API 이미지: 루트 `Dockerfile` — `src/`, `pyproject.toml`, `alembic` 복사 후 `pip install .`
+- 컨테이너 기동 시 `docker/entrypoint.sh`가 **`alembic upgrade head`** 후 **`uvicorn trader.api.app:app`** 실행
+- 브라우저: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
+- `compose`의 `environment.DATABASE_URL`이 **호스트용** `.env`의 `DATABASE_URL`보다 우선합니다 (컨테이너 안에서는 반드시 `@db:5432`).
+- `.env`는 있으면 로드합니다 (`required: false`). 빗썸 키·`API_AUTH_TOKEN` 등만 넣어도 됩니다.
 
-3. DB 스키마 마이그레이션 (Alembic, 프로젝트 루트에서):
+Postgres를 호스트에서 직접 쓰려면 `db` 서비스의 `ports: "5432:5432"` 를 유지했습니다. **DB를 외부에 노출하지 않으려면** 해당 `ports` 블록을 제거하면 됩니다.
 
-   ```bash
-   ./.venv/bin/alembic upgrade head
-   ```
+### 로컬(venv)에서만 개발할 때
 
-   이전에 `create_all`만 쓰다 옮긴 DB처럼 **테이블은 있는데 `alembic_version`이 없으면** 한 번만 맞춰 줍니다:
+1. DB만 Docker: `docker compose up -d db` (또는 전체 compose 후 API는 끔)
+2. `.env`의 `DATABASE_URL`: `postgresql+asyncpg://autocoin:***REMOVED***@127.0.0.1:5432/autocoin`
+3. `./.venv/bin/alembic upgrade head`
+4. `./.venv/bin/autocoin-api`
 
-   `alembic stamp 0001`
-
-4. API 서버 실행:
-
-   ```bash
-   ./.venv/bin/autocoin-api
-   ```
-
-   - [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) — Swagger UI
-   - `GET /health`, `GET /health/db` — 헬스체크
-   - `POST /signals`, `GET /signals` — OpenCrawl 등에서 넘길 **신호 적재**(선택: `API_AUTH_TOKEN` 설정 시 `Authorization: Bearer …` 필요)
+이전에 `create_all`만 쓰다 옮긴 DB는 한 번 `alembic stamp 0001` 로 맞출 수 있습니다.
 
 스키마 변경 시: 모델 수정 후 `alembic revision --autogenerate -m "설명"` → 검토 후 `alembic upgrade head`.
+
+엔드포인트: `GET /health`, `GET /health/db`, `POST/GET /signals` (선택: `API_AUTH_TOKEN` + `Authorization: Bearer …`).
 
 ## 코드 레이아웃
 
