@@ -34,6 +34,24 @@ Docker Compose는 **같은 디렉터리의 `.env`** 를 읽어 `${POSTGRES_USER}
 
 비밀번호에 `@`, `:`, `#` 등 URL에 쓰이는 문자가 있으면 `DATABASE_URL` / `DATABASE_URL_DOCKER` 에서 **퍼센트 인코딩**이 필요합니다.
 
+## Dev Container (VS Code / Cursor)
+
+`.devcontainer/` 에서 **PostgreSQL + Python 개발 컨테이너**를 띄웁니다. 루트의 `docker-compose.yml`(프로덕션용 `ct-api`)과 **볼륨·포트가 겹치지 않게** 별도 compose를 씁니다.
+
+- **명령**: “Dev Containers: Reopen in Container” (또는 동일 메뉴)
+- **DB**: Dev Container 전용 Postgres(볼륨 분리). 컨테이너 안에서는 `ct-db:5432`, 계정은 기본 **`autocoin` / `autocoin`**. 호스트 PC에서는 **`localhost:5433`** (환경 변수 `DEVCONTAINER_POSTGRES_PORT`, 루트 `.env`에 두면 compose 치환에 사용)
+- **postCreate**: `pip install -e '.[dev]'`, `alembic upgrade head`, `pre-commit install`(실패 무시)
+- **확장**: Python, Pylance, Ruff 권장 설정 포함
+
+### 테스트
+
+```bash
+cd /workspace
+pytest
+```
+
+`DATABASE_URL`이 없으면 DB가 필요한 테스트는 스킵됩니다. Dev Container 안에서는 compose가 `DATABASE_URL`을 넣어 주므로 통과합니다.
+
 ## FastAPI + PostgreSQL
 
 ### Docker Compose (DB + API 한 번에)

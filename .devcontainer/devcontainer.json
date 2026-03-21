@@ -1,0 +1,33 @@
+{
+  "name": "Coin Trader (Dev)",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "ct-dev",
+  "workspaceFolder": "/workspace",
+  "remoteUser": "vscode",
+  "forwardPorts": [8000],
+  "portsAttributes": {
+    "8000": {
+      "label": "FastAPI (uvicorn 등 로컬 실행)"
+    }
+  },
+  "postCreateCommand": "pip install -e '.[dev]' && cd /workspace && alembic upgrade head && (pre-commit install || true)",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "charliermarsh.ruff"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "python.analysis.extraPaths": ["/workspace/src"],
+        "[python]": {
+          "editor.defaultFormatter": "charliermarsh.ruff",
+          "editor.formatOnSave": true
+        },
+        "ruff.enable": true,
+        "terminal.integrated.defaultProfile.linux": "bash"
+      }
+    }
+  }
+}
