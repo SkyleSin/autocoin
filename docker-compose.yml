@@ -2,36 +2,35 @@ services:
   ct-db:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: autocoin
-      POSTGRES_PASSWORD: autocoin
-      POSTGRES_DB: autocoin
+      POSTGRES_USER: ${POSTGRES_USER:-autocoin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-autocoin}
+      POSTGRES_DB: ${POSTGRES_DB:-autocoin}
     volumes:
       - autocoin_pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U autocoin -d autocoin"]
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
       timeout: 5s
       retries: 5
     networks:
       - internal
-    # 호스트에서 psql 등으로 붙으려면 유지, 내부 전용이면 아래 ports 제거
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PUBLISH_PORT:-5432}:5432"
 
   ct-api:
     build:
       context: .
       dockerfile: Dockerfile
     environment:
-      # 컨테이너 간 통신: 서비스 이름 ct-db 가 호스트명 (Coin Trader)
-      DATABASE_URL: postgresql+asyncpg://autocoin:***REMOVED***@ct-db:5432/autocoin
-      API_HOST: 0.0.0.0
-      API_PORT: "8000"
+      # .env의 DATABASE_URL(127.0.0.1)보다 우선 — 컨테이너에서는 ct-db 호스트 사용
+      DATABASE_URL: ${DATABASE_URL_DOCKER:-postgresql+asyncpg://autocoin:***REMOVED***@ct-db:5432/autocoin}
+      API_HOST: ${API_HOST:-0.0.0.0}
+      API_PORT: ${API_PORT:-8000}
     env_file:
       - path: .env
         required: false
     ports:
-      - "8000:8000"
+      - "${API_PUBLISH_PORT:-8000}:${API_PORT:-8000}"
     depends_on:
       ct-db:
         condition: service_healthy

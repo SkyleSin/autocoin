@@ -29,3 +29,10 @@ class Settings(BaseSettings):
     @classmethod
     def strip_database_url(cls, v: str) -> str:
         return v.strip()
+
+    @field_validator("db_echo_sql", mode="before")
+    @classmethod
+    def parse_bool_env(cls, v: object) -> bool:
+        if isinstance(v, str):
+            return v.strip().lower() in ("1", "true", "yes", "on")
+        return bool(v)

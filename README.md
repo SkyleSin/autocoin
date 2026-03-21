@@ -19,11 +19,26 @@ Private API(잔고) 확인: `.env.example`을 참고해 `.env`에 키를 넣은 
 ./.venv/bin/autocoin --accounts
 ```
 
+## 환경 변수 (`.env`)
+
+예민한 값은 **전부 `.env`** 에 두고, 저장소에는 **`.env.example`만** 둡니다.
+
+```bash
+cp .env.example .env
+# 비밀번호·API 키 등 수정
+```
+
+`trader.config.Settings`는 프로젝트 루트의 `.env`를 읽습니다. Docker의 `ct-api`는 같은 파일을 `env_file`로 넣되, **`DATABASE_URL`만** compose의 `DATABASE_URL_DOCKER`로 덮어써서 컨테이너 안에서는 호스트명 `ct-db`를 쓰게 합니다.
+
+Docker Compose는 **같은 디렉터리의 `.env`** 를 읽어 `${POSTGRES_USER}` 같은 치환에 씁니다. `POSTGRES_*`와 `DATABASE_URL_DOCKER`의 계정·비밀번호는 **서로 맞출 것**.
+
+비밀번호에 `@`, `:`, `#` 등 URL에 쓰이는 문자가 있으면 `DATABASE_URL` / `DATABASE_URL_DOCKER` 에서 **퍼센트 인코딩**이 필요합니다.
+
 ## FastAPI + PostgreSQL
 
 ### Docker Compose (DB + API 한 번에)
 
-`ct-db`와 `ct-api`(Coin Trader)가 **`internal` 브리지 네트워크**에서만 서로 붙고, API는 `DATABASE_URL`에 서비스 이름 **`ct-db`** 를 씁니다.
+`ct-db`와 `ct-api`(Coin Trader)가 **`internal` 브리지 네트워크**에서만 서로 붙습니다.
 
 ```bash
 docker compose up -d --build
@@ -31,16 +46,16 @@ docker compose up -d --build
 
 - API 이미지: 루트 `Dockerfile` — `src/`, `pyproject.toml`, `alembic` 복사 후 `pip install .`
 - 컨테이너 기동 시 `docker/entrypoint.sh`가 **`alembic upgrade head`** 후 **`uvicorn trader.api.app:app`** 실행
-- 브라우저: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
-- `compose`의 `environment.DATABASE_URL`이 **호스트용** `.env`의 `DATABASE_URL`보다 우선합니다 (컨테이너 안에서는 반드시 `@ct-db:5432`).
-- `.env`는 있으면 로드합니다 (`required: false`). 빗썸 키·`API_AUTH_TOKEN` 등만 넣어도 됩니다.
+- 브라우저: `http://127.0.0.1:8000/docs` (`.env`의 `API_PUBLISH_PORT`로 바꿀 수 있음)
+- **호스트 포트**: `POSTGRES_PUBLISH_PORT`(기본 5432), `API_PUBLISH_PORT` + 컨테이너 내부 `API_PORT`(기본 8000) — `.env.example` 참고
+- `.env`에 `BITHUMB_*`, `API_AUTH_TOKEN`, `DB_ECHO_SQL` 등을 넣으면 컨테이너 앱에도 그대로 전달됩니다
 
-Postgres를 호스트에서 직접 쓰려면 `ct-db` 서비스의 `ports: "5432:5432"` 를 유지했습니다. **DB를 외부에 노출하지 않으려면** 해당 `ports` 블록을 제거하면 됩니다.
+Postgres를 호스트에서 직접 쓰려면 `POSTGRES_PUBLISH_PORT`로 노출한 포트를 씁니다. **DB를 밖에 안 열려면** `docker-compose.yml`의 `ct-db` `ports` 블록을 제거하면 됩니다.
 
 ### 로컬(venv)에서만 개발할 때
 
 1. DB만 Docker: `docker compose up -d ct-db` (또는 전체 compose 후 API는 끔)
-2. `.env`의 `DATABASE_URL`: `postgresql+asyncpg://autocoin:***REMOVED***@127.0.0.1:5432/autocoin`
+2. `.env`의 `DATABASE_URL`: `127.0.0.1` + `POSTGRES_*`와 동일 계정
 3. `./.venv/bin/alembic upgrade head`
 4. `./.venv/bin/autocoin-api`
 
