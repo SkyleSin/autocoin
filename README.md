@@ -2,6 +2,20 @@
 
 빗썸 연동 자동매매 서버 (Python).
 
+## 빠른 시작
+
+```bash
+cd /path/to/autocoin
+./.venv/bin/pip install -e .
+./.venv/bin/python -m autocoin
+```
+
+Private API(잔고) 확인: `.env.example`을 참고해 `.env`에 키를 넣은 뒤:
+
+```bash
+./.venv/bin/python -m autocoin --accounts
+```
+
 ## 시스템 패키지 (Ubuntu / Debian)
 
 터미널에서 한 번 실행:
