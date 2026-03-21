@@ -27,7 +27,7 @@ autocoin-api = "autocoin.api.server:main"
 dev = ["pre-commit", "ruff"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["autocoin"]
+packages = ["src/autocoin"]
 
 [tool.ruff]
 line-length = 100

@@ -55,14 +55,24 @@ Private API(잔고) 확인: `.env.example`을 참고해 `.env`에 키를 넣은 
 
 ## 코드 레이아웃
 
+Python 패키지는 **`src/autocoin/`** 아래에 둡니다 (`pip install -e .` 시 import 경로는 그대로 `autocoin.*`).
+
 | 경로 | 역할 |
 |------|------|
-| `autocoin/models/` | SQLAlchemy ORM |
-| `autocoin/schemas/` | Pydantic 요청/응답 스키마 |
-| `autocoin/services/` | 비즈니스 로직 |
-| `autocoin/routers/` | FastAPI 라우터 |
-| `autocoin/api/` | 앱 조립(`app.py`), DI(`deps.py`) |
+| `src/autocoin/models/` | SQLAlchemy ORM |
+| `src/autocoin/schemas/` | Pydantic 요청/응답 스키마 |
+| `src/autocoin/services/` | 비즈니스 로직 |
+| `src/autocoin/routers/` | FastAPI 라우터 |
+| `src/autocoin/api/` | 앱 조립(`app.py`), DI(`deps.py`) |
 | `alembic/` | PostgreSQL 마이그레이션 |
+
+### DB 테이블 개요
+
+| 테이블 | 용도 |
+|--------|------|
+| `signal_events` | 외부(예: OpenCrawl)에서 받은 매매 **신호** 로그 |
+| `trades` | 실제 **매수/매도 체결** 기록 (수량·가격·주문 ID 등) |
+| `intel_items` | **수집한 정보** 원문·URL·요약·구조화 JSON (`structured_payload`) |
 
 ## 시스템 패키지 (Ubuntu / Debian)
 
