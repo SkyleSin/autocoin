@@ -1,10 +1,10 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from autocoin.api.deps import get_db
+from autocoin.services.health_service import HealthService
 
 router = APIRouter(tags=["health"])
 
@@ -18,5 +18,5 @@ async def health() -> dict[str, str]:
 async def health_db(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict[str, str]:
-    await db.execute(text("SELECT 1"))
+    await HealthService(db).check_database()
     return {"status": "ok", "database": "reachable"}

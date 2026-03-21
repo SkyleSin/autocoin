@@ -3,10 +3,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-import autocoin.db.models  # noqa: F401 — 메타데이터에 모델 등록
-from autocoin.api.routes import health, signals
 from autocoin.config import Settings
-from autocoin.db.base import Base
+from autocoin.routers import health, signals
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -29,8 +27,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
         app.state.settings = settings
         app.state.session_factory = session_factory
         yield

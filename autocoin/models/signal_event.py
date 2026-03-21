@@ -7,7 +7,7 @@ from sqlalchemy import DateTime, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from autocoin.db.base import Base
+from autocoin.models.base import Base
 
 
 class SignalEvent(Base):

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from autocoin.services.signal_service import SignalService
 
 security = HTTPBearer(auto_error=False)
 
@@ -13,10 +16,16 @@ async def get_settings(request: Request):
     return request.app.state.settings
 
 
-async def get_db(request: Request) -> AsyncSession:
+async def get_db(request: Request) -> AsyncGenerator[AsyncSession, None]:
     factory = request.app.state.session_factory
     async with factory() as session:
         yield session
+
+
+def get_signal_service(
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> SignalService:
+    return SignalService(db)
 
 
 async def require_api_token(

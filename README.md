@@ -31,7 +31,17 @@ Private API(잔고) 확인: `.env.example`을 참고해 `.env`에 키를 넣은 
 
    `postgresql+asyncpg://autocoin:***REMOVED***@127.0.0.1:5432/autocoin`
 
-3. API 서버 실행:
+3. DB 스키마 마이그레이션 (Alembic, 프로젝트 루트에서):
+
+   ```bash
+   ./.venv/bin/alembic upgrade head
+   ```
+
+   이전에 `create_all`만 쓰다 옮긴 DB처럼 **테이블은 있는데 `alembic_version`이 없으면** 한 번만 맞춰 줍니다:
+
+   `alembic stamp 0001`
+
+4. API 서버 실행:
 
    ```bash
    ./.venv/bin/autocoin-api
@@ -41,7 +51,18 @@ Private API(잔고) 확인: `.env.example`을 참고해 `.env`에 키를 넣은 
    - `GET /health`, `GET /health/db` — 헬스체크
    - `POST /signals`, `GET /signals` — OpenCrawl 등에서 넘길 **신호 적재**(선택: `API_AUTH_TOKEN` 설정 시 `Authorization: Bearer …` 필요)
 
-기동 시 SQLAlchemy가 **개발 편의를 위해** 테이블을 자동 생성합니다. 운영 환경에서는 마이그레이션(Alembic 등)으로 전환하는 것이 좋습니다.
+스키마 변경 시: 모델 수정 후 `alembic revision --autogenerate -m "설명"` → 검토 후 `alembic upgrade head`.
+
+## 코드 레이아웃
+
+| 경로 | 역할 |
+|------|------|
+| `autocoin/models/` | SQLAlchemy ORM |
+| `autocoin/schemas/` | Pydantic 요청/응답 스키마 |
+| `autocoin/services/` | 비즈니스 로직 |
+| `autocoin/routers/` | FastAPI 라우터 |
+| `autocoin/api/` | 앱 조립(`app.py`), DI(`deps.py`) |
+| `alembic/` | PostgreSQL 마이그레이션 |
 
 ## 시스템 패키지 (Ubuntu / Debian)
 
