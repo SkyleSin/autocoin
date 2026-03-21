@@ -1,21 +1,8 @@
-"""통합 테스트: DATABASE_URL 이 있을 때만 실행 (Dev Container / CI)."""
+"""헬스 엔드포인트."""
 
 from __future__ import annotations
 
-import os
-
-import pytest
 from fastapi.testclient import TestClient
-
-
-@pytest.fixture
-def client() -> TestClient:
-    if not os.environ.get("DATABASE_URL"):
-        pytest.skip("DATABASE_URL 없음 — Dev Container에서 실행하거나 .env 설정")
-    from trader.api.app import app
-
-    with TestClient(app) as c:
-        yield c
 
 
 def test_health(client: TestClient) -> None:

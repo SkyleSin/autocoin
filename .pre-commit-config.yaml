@@ -14,3 +14,16 @@ repos:
       - id: ruff
         args: [--fix]
       - id: ruff-format
+
+  # --- 추후: 커밋 시 pytest (DB 없으면 통합 테스트 스킵됨) ---
+  # 로컬에서 DATABASE_URL 없이 커밋만 할 때는 통과, CI에서만 DB 두고 돌리려면
+  # 아래 훅은 CI 워크플로로 옮기거나, `pass_filenames: false` + `always_run: true` 유지.
+  #
+  # - repo: local
+  #   hooks:
+  #     - id: pytest
+  #       name: pytest
+  #       entry: pytest
+  #       language: system
+  #       pass_filenames: false
+  #       always_run: true
