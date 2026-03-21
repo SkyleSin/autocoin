@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 
-from autocoin.bithumb.client import BithumbAPIError, BithumbClient
+from trader.bithumb.client import BithumbAPIError, BithumbClient
 
 
 def main() -> None:

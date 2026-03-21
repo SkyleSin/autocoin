@@ -3,8 +3,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from autocoin.config import Settings
-from autocoin.routers import health, signals
+from trader.config import Settings
+from trader.routers import health, signals
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:

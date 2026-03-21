@@ -3,8 +3,8 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from autocoin.api.deps import get_db
-from autocoin.services.health_service import HealthService
+from trader.api.deps import get_db
+from trader.services.health_service import HealthService
 
 router = APIRouter(tags=["health"])
 

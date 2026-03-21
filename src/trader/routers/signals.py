@@ -2,9 +2,9 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
 
-from autocoin.api.deps import get_signal_service, require_api_token
-from autocoin.schemas.signal import SignalCreate, SignalRead
-from autocoin.services.signal_service import SignalService
+from trader.api.deps import get_signal_service, require_api_token
+from trader.schemas.signal import SignalCreate, SignalRead
+from trader.services.signal_service import SignalService
 
 router = APIRouter(prefix="/signals", tags=["signals"])
 

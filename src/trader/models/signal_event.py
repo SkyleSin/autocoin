@@ -7,11 +7,15 @@ from sqlalchemy import DateTime, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from autocoin.models.base import Base
+from trader.models.base import Base
 
 
 class SignalEvent(Base):
-    """OpenCrawl 등 외부에서 넘어온 매매 신호(또는 판단 로그) 저장."""
+    """외부 시스템이 보낸 '매매 의도' 로그.
+
+    *거래소 체결 내역*은 `Trade` / `trades`에 넣고, *수집·분석 자료*는 `ResearchItem`에 둡니다.
+    여기는 OpenCrawl 등이 HTTP로 넘긴 buy/sell/hold 같은 **신호만** 남깁니다 (감사·재처리용).
+    """
 
     __tablename__ = "signal_events"
 

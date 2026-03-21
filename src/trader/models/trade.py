@@ -8,7 +8,7 @@ from sqlalchemy import DateTime, Index, Numeric, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from autocoin.models.base import Base
+from trader.models.base import Base
 
 
 class Trade(Base):

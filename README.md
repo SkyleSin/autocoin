@@ -8,10 +8,10 @@
 cd /path/to/autocoin
 ./.venv/bin/pip install -e .
 ./.venv/bin/autocoin
-# 또는 동일 진입점: ./.venv/bin/python -m autocoin
+# 또는: ./.venv/bin/python -m trader
 ```
 
-`pip install -e .` 후에는 `autocoin` 명령은 `pyproject.toml`의 `[project.scripts]`가 `.venv/bin/autocoin` 실행 파일을 만들어 줍니다.
+`pip install -e .` 후 콘솔 스크립트 `autocoin` / `autocoin-api`는 내부적으로 **`trader`** 패키지를 실행합니다. 코드에서는 `import trader...` 를 씁니다.
 
 Private API(잔고) 확인: `.env.example`을 참고해 `.env`에 키를 넣은 뒤:
 
@@ -55,24 +55,24 @@ Private API(잔고) 확인: `.env.example`을 참고해 `.env`에 키를 넣은 
 
 ## 코드 레이아웃
 
-Python 패키지는 **`src/autocoin/`** 아래에 둡니다 (`pip install -e .` 시 import 경로는 그대로 `autocoin.*`).
+설치 가능한 패키지는 **`src/trader/`** 한 곳에만 둡니다 (저장소 폴더 이름 `autocoin`과 겹치지 않음).
 
 | 경로 | 역할 |
 |------|------|
-| `src/autocoin/models/` | SQLAlchemy ORM |
-| `src/autocoin/schemas/` | Pydantic 요청/응답 스키마 |
-| `src/autocoin/services/` | 비즈니스 로직 |
-| `src/autocoin/routers/` | FastAPI 라우터 |
-| `src/autocoin/api/` | 앱 조립(`app.py`), DI(`deps.py`) |
+| `src/trader/models/` | SQLAlchemy ORM |
+| `src/trader/schemas/` | Pydantic 요청/응답 스키마 |
+| `src/trader/services/` | 비즈니스 로직 |
+| `src/trader/routers/` | FastAPI 라우터 |
+| `src/trader/api/` | 앱 조립(`app.py`), DI(`deps.py`) |
 | `alembic/` | PostgreSQL 마이그레이션 |
 
-### DB 테이블 개요
+### DB 테이블이 세 가지인 이유
 
 | 테이블 | 용도 |
 |--------|------|
-| `signal_events` | 외부(예: OpenCrawl)에서 받은 매매 **신호** 로그 |
-| `trades` | 실제 **매수/매도 체결** 기록 (수량·가격·주문 ID 등) |
-| `intel_items` | **수집한 정보** 원문·URL·요약·구조화 JSON (`structured_payload`) |
+| **`signal_events`** | 외부(예: OpenCrawl)가 API로 보낸 **매매 의도**만 기록합니다. `buy` / `sell` / `hold`, 근거 텍스트, 원본 JSON 등. **아직 거래소에 주문이 나간 것과는 별개**입니다. |
+| **`trades`** | 빗썸 등에서 **실제로 체결·주문된 사실** (수량, 가격, 주문 ID, 수수료 등). 손익·감사용입니다. |
+| **`research_items`** | 뉴스·리포트·크롤 결과 등 **시장 판단에 쓰는 자료**를 모읍니다. 원문·URL·요약·`structured_payload`(정리된 필드)를 둡니다. |
 
 ## 시스템 패키지 (Ubuntu / Debian)
 

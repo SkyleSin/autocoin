@@ -1,7 +1,7 @@
 import uvicorn
 
-from autocoin.api.app import create_app
-from autocoin.config import Settings
+from trader.api.app import create_app
+from trader.config import Settings
 
 
 def main() -> None:

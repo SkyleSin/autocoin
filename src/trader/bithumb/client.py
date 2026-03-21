@@ -5,8 +5,8 @@ from typing import Any
 
 import httpx
 
-from autocoin.bithumb.auth import build_authorization_header
-from autocoin.config import Settings
+from trader.bithumb.auth import build_authorization_header
+from trader.config import Settings
 
 
 class BithumbAPIError(Exception):

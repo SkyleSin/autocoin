@@ -7,14 +7,14 @@ from sqlalchemy import DateTime, Float, Index, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from autocoin.models.base import Base
+from trader.models.base import Base
 
 
-class IntelItem(Base):
-    """크롤·OpenCrawl 등으로 수집한 원문과, 정리·요약된 구조화 정보."""
+class ResearchItem(Base):
+    """크롤·OpenCrawl 등으로 모은 자료와, 요약·정리한 구조화 필드."""
 
-    __tablename__ = "intel_items"
-    __table_args__ = (Index("ix_intel_items_source_collected", "source", "collected_at"),)
+    __tablename__ = "research_items"
+    __table_args__ = (Index("ix_research_items_source_collected", "source", "collected_at"),)
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),

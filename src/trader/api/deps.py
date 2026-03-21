@@ -7,7 +7,7 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from autocoin.services.signal_service import SignalService
+from trader.services.signal_service import SignalService
 
 security = HTTPBearer(auto_error=False)
 

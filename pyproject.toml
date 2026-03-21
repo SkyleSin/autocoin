@@ -20,14 +20,14 @@ dependencies = [
 ]
 
 [project.scripts]
-autocoin = "autocoin.__main__:main"
-autocoin-api = "autocoin.api.server:main"
+autocoin = "trader.__main__:main"
+autocoin-api = "trader.api.server:main"
 
 [project.optional-dependencies]
 dev = ["pre-commit", "ruff"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/autocoin"]
+packages = ["src/trader"]
 
 [tool.ruff]
 line-length = 100

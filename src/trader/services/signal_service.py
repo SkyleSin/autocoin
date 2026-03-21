@@ -3,8 +3,8 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from autocoin.models import SignalEvent
-from autocoin.schemas.signal import SignalCreate
+from trader.models import SignalEvent
+from trader.schemas.signal import SignalCreate
 
 
 class SignalService:
