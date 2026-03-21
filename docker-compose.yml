@@ -1,5 +1,5 @@
 services:
-  db:
+  ct-db:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: autocoin
@@ -18,13 +18,13 @@ services:
     ports:
       - "5432:5432"
 
-  api:
+  ct-api:
     build:
       context: .
       dockerfile: Dockerfile
     environment:
-      # 컨테이너 간 통신: 서비스 이름 db 가 호스트명
-      DATABASE_URL: postgresql+asyncpg://autocoin:***REMOVED***@db:5432/autocoin
+      # 컨테이너 간 통신: 서비스 이름 ct-db 가 호스트명 (Coin Trader)
+      DATABASE_URL: postgresql+asyncpg://autocoin:***REMOVED***@ct-db:5432/autocoin
       API_HOST: 0.0.0.0
       API_PORT: "8000"
     env_file:
@@ -33,7 +33,7 @@ services:
     ports:
       - "8000:8000"
     depends_on:
-      db:
+      ct-db:
         condition: service_healthy
     networks:
       - internal

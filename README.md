@@ -23,7 +23,7 @@ Private API(잔고) 확인: `.env.example`을 참고해 `.env`에 키를 넣은 
 
 ### Docker Compose (DB + API 한 번에)
 
-`db`와 `api`가 **`internal` 브리지 네트워크**에서만 서로 붙고, API는 `DATABASE_URL`에 서비스 이름 **`db`** 를 씁니다.
+`ct-db`와 `ct-api`(Coin Trader)가 **`internal` 브리지 네트워크**에서만 서로 붙고, API는 `DATABASE_URL`에 서비스 이름 **`ct-db`** 를 씁니다.
 
 ```bash
 docker compose up -d --build
@@ -32,14 +32,14 @@ docker compose up -d --build
 - API 이미지: 루트 `Dockerfile` — `src/`, `pyproject.toml`, `alembic` 복사 후 `pip install .`
 - 컨테이너 기동 시 `docker/entrypoint.sh`가 **`alembic upgrade head`** 후 **`uvicorn trader.api.app:app`** 실행
 - 브라우저: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
-- `compose`의 `environment.DATABASE_URL`이 **호스트용** `.env`의 `DATABASE_URL`보다 우선합니다 (컨테이너 안에서는 반드시 `@db:5432`).
+- `compose`의 `environment.DATABASE_URL`이 **호스트용** `.env`의 `DATABASE_URL`보다 우선합니다 (컨테이너 안에서는 반드시 `@ct-db:5432`).
 - `.env`는 있으면 로드합니다 (`required: false`). 빗썸 키·`API_AUTH_TOKEN` 등만 넣어도 됩니다.
 
-Postgres를 호스트에서 직접 쓰려면 `db` 서비스의 `ports: "5432:5432"` 를 유지했습니다. **DB를 외부에 노출하지 않으려면** 해당 `ports` 블록을 제거하면 됩니다.
+Postgres를 호스트에서 직접 쓰려면 `ct-db` 서비스의 `ports: "5432:5432"` 를 유지했습니다. **DB를 외부에 노출하지 않으려면** 해당 `ports` 블록을 제거하면 됩니다.
 
 ### 로컬(venv)에서만 개발할 때
 
-1. DB만 Docker: `docker compose up -d db` (또는 전체 compose 후 API는 끔)
+1. DB만 Docker: `docker compose up -d ct-db` (또는 전체 compose 후 API는 끔)
 2. `.env`의 `DATABASE_URL`: `postgresql+asyncpg://autocoin:***REMOVED***@127.0.0.1:5432/autocoin`
 3. `./.venv/bin/alembic upgrade head`
 4. `./.venv/bin/autocoin-api`
