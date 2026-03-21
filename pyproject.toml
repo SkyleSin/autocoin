@@ -12,10 +12,15 @@ dependencies = [
     "httpx>=0.27",
     "PyJWT>=2.8",
     "pydantic-settings>=2.0",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "sqlalchemy[asyncio]>=2.0",
+    "asyncpg>=0.29",
 ]
 
 [project.scripts]
 autocoin = "autocoin.__main__:main"
+autocoin-api = "autocoin.api.server:main"
 
 [project.optional-dependencies]
 dev = ["pre-commit", "ruff"]

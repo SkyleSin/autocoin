@@ -19,6 +19,30 @@ Private API(잔고) 확인: `.env.example`을 참고해 `.env`에 키를 넣은 
 ./.venv/bin/autocoin --accounts
 ```
 
+## FastAPI + PostgreSQL
+
+1. DB 기동 (Docker):
+
+   ```bash
+   docker compose up -d
+   ```
+
+2. `.env`에 `DATABASE_URL` 설정 (`.env.example` 참고). 예:
+
+   `postgresql+asyncpg://autocoin:***REMOVED***@127.0.0.1:5432/autocoin`
+
+3. API 서버 실행:
+
+   ```bash
+   ./.venv/bin/autocoin-api
+   ```
+
+   - [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) — Swagger UI
+   - `GET /health`, `GET /health/db` — 헬스체크
+   - `POST /signals`, `GET /signals` — OpenCrawl 등에서 넘길 **신호 적재**(선택: `API_AUTH_TOKEN` 설정 시 `Authorization: Bearer …` 필요)
+
+기동 시 SQLAlchemy가 **개발 편의를 위해** 테이블을 자동 생성합니다. 운영 환경에서는 마이그레이션(Alembic 등)으로 전환하는 것이 좋습니다.
+
 ## 시스템 패키지 (Ubuntu / Debian)
 
 터미널에서 한 번 실행:

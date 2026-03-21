@@ -1,0 +1,19 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: autocoin
+      POSTGRES_PASSWORD: autocoin
+      POSTGRES_DB: autocoin
+    ports:
+      - "5432:5432"
+    volumes:
+      - autocoin_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U autocoin -d autocoin"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  autocoin_pgdata:
