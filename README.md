@@ -7,13 +7,16 @@
 ```bash
 cd /path/to/autocoin
 ./.venv/bin/pip install -e .
-./.venv/bin/python -m autocoin
+./.venv/bin/autocoin
+# 또는 동일 진입점: ./.venv/bin/python -m autocoin
 ```
+
+`pip install -e .` 후에는 `autocoin` 명령은 `pyproject.toml`의 `[project.scripts]`가 `.venv/bin/autocoin` 실행 파일을 만들어 줍니다.
 
 Private API(잔고) 확인: `.env.example`을 참고해 `.env`에 키를 넣은 뒤:
 
 ```bash
-./.venv/bin/python -m autocoin --accounts
+./.venv/bin/autocoin --accounts
 ```
 
 ## 시스템 패키지 (Ubuntu / Debian)

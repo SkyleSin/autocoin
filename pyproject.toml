@@ -14,6 +14,9 @@ dependencies = [
     "pydantic-settings>=2.0",
 ]
 
+[project.scripts]
+autocoin = "autocoin.__main__:main"
+
 [project.optional-dependencies]
 dev = ["pre-commit", "ruff"]
 
