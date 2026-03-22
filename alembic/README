@@ -1,2 +1,0 @@
-Alembic 마이그레이션 스크립트.
-프로젝트 루트에서 `alembic upgrade head` 실행 (`.env`에 DATABASE_URL).
