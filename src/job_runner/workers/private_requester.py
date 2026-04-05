@@ -47,10 +47,10 @@ class PrivateRequester(CoinServerClientBase):
                 m, path, headers=headers, json=json_body,
             )
         elif params is not None:
-            # POST + form data (빗썸 주문 등)
-            headers["Content-Type"] = "application/x-www-form-urlencoded"
+            # POST + form data (빗썸 주문 등) — 키 정렬 (query_hash와 일치)
+            sorted_params = dict(sorted(params.items()))
             r = self._client.request(
-                m, path, headers=headers, data=params,
+                m, path, headers=headers, data=sorted_params,
             )
         else:
             r = self._client.request(m, path, headers=headers)
