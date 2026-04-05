@@ -6,14 +6,17 @@ import asyncio
 import logging
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from executor.position_sizing import calculate_position
 from executor.risk_manager import check_risk
 from job_runner.exceptions import JobExecutionFailed
 from job_runner.rate_limit import AsyncSlidingWindowRateLimiter
 from job_runner.workers import PrivateRequester
 from models.job import Job
 from models.job_status import JobStatus
+from models.signal import Signal
 from telegram.bot import send_signal_alert
 from utils.config import Settings
 
@@ -88,17 +91,46 @@ async def _chain_trade_from_balance(
     )
     coin_balance = float(coin_acc["balance"]) if coin_acc else 0
 
+    # 매도 시 코인 미보유 체크
+    if bithumb_side == "ask" and coin_balance <= 0:
+        if token and chat_id:
+            await send_signal_alert(
+                token, chat_id,
+                f"❌ `{market}` 매도 불가 — 보유 코인 없음",
+            )
+        return
+
+    # 최근 시그널에서 패턴/지표 정보 조회
+    last_signal = (await session.execute(
+        select(Signal)
+        .where(Signal.market == market)
+        .order_by(Signal.created_at.desc())
+        .limit(1)
+    )).scalar_one_or_none()
+
+    indicators = last_signal.indicators if last_signal else None
+    confidence = last_signal.confidence if last_signal else 0.5
+    patterns = None
+    if indicators and isinstance(indicators.get("patterns"), dict):
+        patterns = indicators["patterns"].get("patterns", [])
+
+    # 패턴 기반 포지션 사이징
+    pos = None
     if bithumb_side == "bid":
-        intended = krw_balance * (settings.risk_max_per_trade_pct / 100)
+        pos = calculate_position(
+            krw_balance,
+            patterns=patterns,
+            confidence=confidence,
+            indicators=indicators,
+        )
+        intended = pos.amount_krw
+        logger.info(
+            "포지션 사이징: %s %s → %.1f%% (%s), 조절: %s",
+            market, pos.pattern_name, pos.allocation_pct,
+            f"{intended:,.0f}원", pos.adjustments,
+        )
     else:
         intended = coin_balance * price
-        if coin_balance <= 0:
-            if token and chat_id:
-                await send_signal_alert(
-                    token, chat_id,
-                    f"❌ `{market}` 매도 불가 — 보유 코인 없음",
-                )
-            return
 
     risk = await check_risk(
         session, settings,
@@ -140,10 +172,20 @@ async def _chain_trade_from_balance(
 
     if token and chat_id:
         if bithumb_side == "bid":
+            sizing_info = ""
+            if pos is not None:
+                adj_text = "\n".join(f"  • {a}" for a in pos.adjustments)
+                sizing_info = (
+                    f"\n*포지션 사이징:*\n"
+                    f"  패턴: {pos.pattern_name}\n"
+                    f"  비율: {pos.allocation_pct}%\n"
+                    f"{adj_text}"
+                )
             msg = (
                 f"✅ `{market}` 매수 주문 생성\n"
                 f"금액: `{risk.max_amount_krw:,.0f} KRW` (시장가)\n"
                 f"KRW 잔고: `{krw_balance:,.0f}`"
+                f"{sizing_info}"
             )
         else:
             msg = (
