@@ -84,26 +84,48 @@ async def send_photo(
 
 
 def make_signal_buttons(
-    market: str, signal_type: str, close_price: float,
+    market: str,
+    signal_type: str,
+    close_price: float,
+    *,
+    sell_recommended_pct: int = 0,
+    sell_choices: list[int] | None = None,
 ) -> dict[str, Any]:
     """시그널 알림용 인라인 버튼 생성."""
-    side = "BUY" if signal_type == "BUY" else "SELL"
-    action_label = "🟢 매수 실행" if side == "BUY" else "🔴 매도 실행"
-
-    return {
-        "inline_keyboard": [
-            [
-                {
-                    "text": action_label,
-                    "callback_data": f"trade_execute:{market}:{side}:{close_price}",
-                },
-                {
-                    "text": "⏭️ 패스",
-                    "callback_data": "trade_pass",
-                },
+    if signal_type == "BUY":
+        return {
+            "inline_keyboard": [
+                [
+                    {
+                        "text": "🟢 매수 실행",
+                        "callback_data": f"trade_execute:{market}:BUY:{close_price}",
+                    },
+                    {
+                        "text": "⏭️ 패스",
+                        "callback_data": "trade_pass",
+                    },
+                ],
             ],
-        ],
-    }
+        }
+
+    # SELL — 20% 단위 선택지 + 추천 표시
+    choices = sell_choices or [20, 40, 60, 80, 100]
+    rows: list[list[dict[str, str]]] = []
+    row: list[dict[str, str]] = []
+    for pct in choices:
+        star = " ⭐" if pct == sell_recommended_pct else ""
+        row.append({
+            "text": f"{'🔴 ' if pct == sell_recommended_pct else ''}{pct}%{star}",
+            "callback_data": f"trade_sell:{market}:{close_price}:{pct}",
+        })
+        if len(row) == 3:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([{"text": "⏭️ 패스", "callback_data": "trade_pass"}])
+
+    return {"inline_keyboard": rows}
 
 
 async def send_signal_alert(
@@ -115,11 +137,17 @@ async def send_signal_alert(
     market: str = "",
     signal_type: str = "",
     close_price: float = 0,
+    sell_recommended_pct: int = 0,
+    sell_choices: list[int] | None = None,
 ) -> bool:
     """시그널 알림 전송. BUY/SELL이면 인라인 버튼 포함."""
     buttons = None
     if signal_type in ("BUY", "SELL") and market:
-        buttons = make_signal_buttons(market, signal_type, close_price)
+        buttons = make_signal_buttons(
+            market, signal_type, close_price,
+            sell_recommended_pct=sell_recommended_pct,
+            sell_choices=sell_choices,
+        )
 
     if chart_image:
         return await send_photo(

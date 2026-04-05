@@ -33,9 +33,20 @@ PATTERN_ALLOCATION: dict[str, float] = {
 # 패턴 없을 때 기본 비율
 DEFAULT_ALLOCATION_PCT = 10.0
 
+# 매도 패턴별 추천 매도 비율 (보유량 대비 %)
+SELL_PATTERN_RECOMMENDATION: dict[str, int] = {
+    "double_top": 100,          # 쌍봉 — 전량 매도 추천
+    "triple_top": 100,          # 삼중천정 — 전량 매도
+    "head_and_shoulders": 80,   # 머리어깨 — 80% 매도
+    "bear_flag": 80,            # 하락깃발 — 80% 매도
+    "rising_wedge": 60,         # 상승쐐기 — 60% 매도
+    "descending_triangle": 60,  # 하락삼각형 — 60% 매도
+}
+SELL_DEFAULT_RECOMMENDATION = 40  # 패턴 없을 때 기본 추천
+
 # 자동 조절 기준
-MAX_ALLOCATION_PCT = 50.0   # 절대 상한
-MIN_ALLOCATION_PCT = 5.0    # 절대 하한
+MAX_ALLOCATION_PCT = 50.0   # 절대 상한 (매수용)
+MIN_ALLOCATION_PCT = 5.0    # 절대 하한 (매수용)
 
 
 @dataclass(frozen=True)
@@ -131,4 +142,37 @@ def calculate_position(
         amount_krw=round(amount, 0),
         pattern_name=pattern_name,
         adjustments=adjustments,
+    )
+
+
+@dataclass(frozen=True)
+class SellRecommendation:
+    """매도 추천 결과."""
+
+    recommended_pct: int    # 추천 매도 비율 (%)
+    pattern_name: str       # 기준 패턴
+    choices: list[int]      # 선택지 [20, 40, 60, 80, 100]
+
+
+def calculate_sell_recommendation(
+    patterns: list[dict[str, Any]] | None = None,
+) -> SellRecommendation:
+    """패턴 기반 매도 비율 추천 + 20% 단위 선택지."""
+    choices = [20, 40, 60, 80, 100]
+    pattern_name = "없음"
+    recommended = SELL_DEFAULT_RECOMMENDATION
+
+    if patterns:
+        top = patterns[0]
+        name = top.get("name", "")
+        pattern_name = top.get("name_ko", name)
+        recommended = SELL_PATTERN_RECOMMENDATION.get(name, SELL_DEFAULT_RECOMMENDATION)
+
+    # 추천값을 20% 단위로 스냅
+    recommended = max(20, min(100, round(recommended / 20) * 20))
+
+    return SellRecommendation(
+        recommended_pct=recommended,
+        pattern_name=pattern_name,
+        choices=choices,
     )

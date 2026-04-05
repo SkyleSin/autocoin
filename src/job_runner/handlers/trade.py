@@ -155,10 +155,12 @@ async def _chain_trade_from_balance(
             "ord_type": "price",
         }
     else:
+        sell_pct = int(content.get("sell_pct", 100))
+        sell_volume = coin_balance * (sell_pct / 100)
         order_content = {
             "market": market,
             "side": "ask",
-            "volume": str(coin_balance),
+            "volume": str(sell_volume),
             "ord_type": "market",
         }
 
@@ -188,9 +190,11 @@ async def _chain_trade_from_balance(
                 f"{sizing_info}"
             )
         else:
+            sell_pct = int(content.get("sell_pct", 100))
             msg = (
                 f"✅ `{market}` 매도 주문 생성\n"
-                f"수량: `{coin_balance}` {coin_currency} (시장가)\n"
+                f"비율: `{sell_pct}%` → 수량: `{sell_volume}` {coin_currency}\n"
+                f"보유: `{coin_balance}` {coin_currency}\n"
                 f"KRW 잔고: `{krw_balance:,.0f}`"
             )
         await send_signal_alert(token, chat_id, msg)

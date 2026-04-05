@@ -247,6 +247,20 @@ async def handle_analyze_local_llm(
     except Exception:
         logger.warning("차트 이미지 생성 실패", exc_info=True)
 
+    # SELL 시 매도 추천 비율 계산
+    sell_rec_pct = 0
+    sell_choices = None
+    if llm_result.decision == "SELL":
+        from executor.position_sizing import calculate_sell_recommendation
+
+        pat_list = None
+        if indicators and isinstance(indicators.get("patterns"), dict):
+            pat_list = indicators["patterns"].get("patterns", [])
+        sell_rec = calculate_sell_recommendation(pat_list)
+        sell_rec_pct = sell_rec.recommended_pct
+        sell_choices = sell_rec.choices
+        alert_text += f"\n\n📊 *매도 추천:* {sell_rec.pattern_name} → `{sell_rec_pct}%`"
+
     await send_signal_alert(
         settings.telegram_bot_token,
         settings.telegram_chat_id,
@@ -255,4 +269,6 @@ async def handle_analyze_local_llm(
         market=market,
         signal_type=llm_result.decision,
         close_price=close_price,
+        sell_recommended_pct=sell_rec_pct,
+        sell_choices=sell_choices,
     )

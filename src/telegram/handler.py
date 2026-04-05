@@ -455,6 +455,35 @@ async def _handle_callback(
                 )
                 session.add(job)
                 await session.commit()
+    elif data.startswith("trade_sell:"):
+        # trade_sell:{market}:{price}:{pct}
+        parts = data.split(":")
+        if len(parts) >= 4:
+            market = parts[1]
+            price = float(parts[2])
+            sell_pct = int(parts[3])
+            await send_message(
+                token, chat_id,
+                f"⏳ `{market}` 매도 {sell_pct}% 주문 준비 중...\n"
+                f"현재가: `{price:,.0f} KRW`",
+            )
+            async with sf() as session:
+                from models.job import Job
+                from models.job_status import JobStatus
+                job = Job(
+                    type="check_balance",
+                    status=JobStatus.Ready.value,
+                    content={
+                        "trigger": "telegram",
+                        "market": market,
+                        "side": "SELL",
+                        "price": price,
+                        "sell_pct": sell_pct,
+                    },
+                    priority=5,
+                )
+                session.add(job)
+                await session.commit()
     elif data == "trade_pass":
         await send_message(token, chat_id, "⏭️ 시그널을 패스했습니다.")
     else:
