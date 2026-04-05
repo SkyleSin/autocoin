@@ -79,6 +79,47 @@ def _resolve_level(level: str | int | None) -> int:
     return getattr(logging, level.upper(), logging.INFO)
 
 
+def _resolved_file_path(log_dir: str, log_file: str) -> str:
+    return os.path.abspath(os.path.join(log_dir, log_file))
+
+
+def _root_has_rotating_handler_for(root: logging.Logger, path: str) -> bool:
+    want = os.path.normpath(path)
+    for h in root.handlers:
+        if isinstance(h, RotatingFileHandler):
+            bf = getattr(h, "baseFilename", None)
+            if bf is not None and os.path.normpath(bf) == want:
+                return True
+    return False
+
+
+def _attach_rotating_file_handler(
+    root: logging.Logger,
+    *,
+    log_dir: str,
+    log_file: str,
+    max_bytes: int,
+    backup: int,
+) -> None:
+    path = _resolved_file_path(log_dir, log_file)
+    if _root_has_rotating_handler_for(root, path):
+        return
+    os.makedirs(log_dir, exist_ok=True)
+    fh = RotatingFileHandler(
+        path,
+        maxBytes=max_bytes,
+        backupCount=backup,
+        encoding="utf-8",
+    )
+    fh.setFormatter(
+        KSTFormatter(
+            "%(asctime)s %(levelname)s [%(name)s] %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        ),
+    )
+    root.addHandler(fh)
+
+
 def setup_logging(
     *,
     settings: Settings | None = None,
@@ -87,8 +128,6 @@ def setup_logging(
     force: bool = False,
 ) -> None:
     root = logging.getLogger()
-    if root.handlers and not force:
-        return
 
     if settings is not None:
         eff_level = level if level is not None else settings.log_level
@@ -105,6 +144,22 @@ def setup_logging(
         max_bytes = 10_485_760
         backup = 5
 
+    if root.handlers and not force:
+        root.setLevel(_resolve_level(eff_level))
+        # uvicorn 등이 이미 StreamHandler를 붙인 뒤에는 파일 핸들러만 없을 수 있음.
+        if log_file:
+            try:
+                _attach_rotating_file_handler(
+                    root,
+                    log_dir=log_dir,
+                    log_file=log_file,
+                    max_bytes=max_bytes,
+                    backup=backup,
+                )
+            except OSError as e:
+                root.warning("파일 로그 비활성: %s", e)
+        return
+
     root.setLevel(_resolve_level(eff_level))
     if force:
         root.handlers.clear()
@@ -120,20 +175,12 @@ def setup_logging(
 
     if log_file:
         try:
-            os.makedirs(log_dir, exist_ok=True)
-            path = os.path.join(log_dir, log_file)
-            fh = RotatingFileHandler(
-                path,
-                maxBytes=max_bytes,
-                backupCount=backup,
-                encoding="utf-8",
+            _attach_rotating_file_handler(
+                root,
+                log_dir=log_dir,
+                log_file=log_file,
+                max_bytes=max_bytes,
+                backup=backup,
             )
-            fh.setFormatter(
-                KSTFormatter(
-                    "%(asctime)s %(levelname)s [%(name)s] %(message)s",
-                    datefmt="%Y-%m-%d %H:%M:%S",
-                ),
-            )
-            root.addHandler(fh)
         except OSError as e:
             root.warning("파일 로그 비활성: %s", e)

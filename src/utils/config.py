@@ -30,10 +30,93 @@ class Settings(BaseSettings):
         default="https://api.bithumb.com",
         validation_alias="BITHUMB_BASE_URL",
     )
+    bithumb_max_requests_per_sec: int = Field(
+        default=15,
+        ge=0,
+        description="빗썸(공개) REST 초당 최대 호출 수(전 워커 합산). 0이면 제한 없음.",
+        validation_alias="BITHUMB_MAX_REQUESTS_PER_SEC",
+    )
+
+    job_poll_interval_sec: float = Field(
+        default=1.0,
+        validation_alias="AUTOCOIN_JOB_POLL_INTERVAL_SEC",
+    )
+    job_claim_limit: int = Field(
+        default=200,
+        validation_alias="AUTOCOIN_JOB_CLAIM_LIMIT",
+    )
+    job_worker_count: int = Field(
+        default=4,
+        ge=1,
+        validation_alias="AUTOCOIN_JOB_WORKER_COUNT",
+    )
+    job_retry_max: int = Field(
+        default=3,
+        ge=1,
+        le=3,
+        description="재시도 가능 실패 시 retry_cnt가 이 값 이상이면 Error로 종료.",
+        validation_alias="AUTOCOIN_JOB_RETRY_MAX",
+    )
+
+    telegram_bot_token: str = Field(
+        default="",
+        validation_alias="TELEGRAM_BOT_TOKEN",
+    )
+    telegram_chat_id: str = Field(
+        default="",
+        validation_alias="TELEGRAM_CHAT_ID",
+    )
+
+    ollama_base_url: str = Field(
+        default="http://localhost:11434",
+        validation_alias="OLLAMA_BASE_URL",
+    )
+    ollama_model: str = Field(
+        default="gemma3:4b",
+        validation_alias="OLLAMA_MODEL",
+    )
+    ollama_num_gpu: int = Field(
+        default=0,
+        ge=0,
+        description="Ollama GPU 레이어 수. 0이면 CPU 전용.",
+        validation_alias="OLLAMA_NUM_GPU",
+    )
+    ollama_timeout: float = Field(
+        default=60.0,
+        description="Ollama 응답 타임아웃(초).",
+        validation_alias="OLLAMA_TIMEOUT",
+    )
+
+    # 리스크 설정 기본값 (DB에 저장된 값이 있으면 서버 시작 시 덮어씀)
+    risk_max_per_trade_pct: float = 5.0
+    risk_max_daily_trades: int = 10
+    risk_min_krw_reserve: float = 100_000.0
+
+    candle_interval_sec: float = Field(
+        default=60.0,
+        description="캔들 수집 주기(초). 1분봉 기준 60.",
+        validation_alias="AUTOCOIN_CANDLE_INTERVAL_SEC",
+    )
+    candle_unit: int = Field(
+        default=1,
+        description="분봉 단위 (1, 3, 5, 10, 15, 30, 60, 240).",
+        validation_alias="AUTOCOIN_CANDLE_UNIT",
+    )
+    candle_count: int = Field(
+        default=1,
+        ge=1,
+        le=200,
+        description="사이클당 요청 캔들 개수.",
+        validation_alias="AUTOCOIN_CANDLE_COUNT",
+    )
 
     log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")
     log_dir: str = Field(default="./log", validation_alias="LOG_DIR")
-    log_file: str = Field(default="", validation_alias="LOG_FILE")
+    log_file: str = Field(
+        default="autocoin.log",
+        validation_alias="LOG_FILE",
+        description="파일 로그 파일명(비우면 파일 핸들러 비활성).",
+    )
     log_max_bytes: int = Field(default=10_485_760, validation_alias="LOG_MAX_BYTES")
     log_backup_count: int = Field(default=5, validation_alias="LOG_BACKUP_COUNT")
     log_json_console: bool = Field(default=False, validation_alias="LOG_JSON_CONSOLE")

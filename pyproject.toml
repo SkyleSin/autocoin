@@ -15,6 +15,9 @@ dependencies = [
     "asyncpg>=0.29",
     "pydantic-settings>=2.0",
     "httpx>=0.27",
+    "matplotlib>=3.8",
+    "mplfinance>=0.12",
+    "pandas>=2.0",
     "PyJWT>=2.8",
 ]
 
@@ -26,13 +29,18 @@ dev = ["pre-commit", "ruff"]
 
 [tool.hatch.build.targets.wheel]
 packages = [
+  "src/ai_engine",
+  "src/analysis",
+  "src/collector",
+  "src/executor",
+  "src/job_runner",
   "src/bithumb",
   "src/models",
   "src/schemas",
   "src/services",
   "src/routers",
+  "src/telegram",
   "src/utils",
-  "src/worker",
 ]
 
 [tool.hatch.build.targets.wheel.force-include]

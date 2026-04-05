@@ -10,8 +10,9 @@ from models.job_status import JobStatus
 
 
 class JobCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     type: str = Field(..., max_length=64)
-    status: JobStatus = Field(default=JobStatus.Ready)
     response: dict[str, Any] | None = None
     content: dict[str, Any] | None = None
     retry_cnt: int = 0
