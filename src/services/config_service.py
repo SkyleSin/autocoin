@@ -7,12 +7,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.app_config import AppConfig
 from utils.config import Settings
 
-# DB에 저장할 리스크 설정 키
-RISK_KEYS = {
+# DB에 저장할 런타임 설정 키
+DB_KEYS: dict[str, type] = {
     "risk_max_per_trade_pct": float,
     "risk_max_daily_trades": int,
     "risk_min_krw_reserve": float,
+    "alert_remind_interval_sec": float,
 }
+
+# 하위 호환용 alias
+RISK_KEYS = DB_KEYS
 
 
 async def get_config(session: AsyncSession, key: str) -> str | None:

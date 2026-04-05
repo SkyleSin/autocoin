@@ -198,13 +198,19 @@ async def _cmd_risk(
 
     # /risk 만 입력 → 현재 설정 보기
     if len(parts) == 1:
-        msg = f"""⚙️ *리스크 설정* (DB 저장)
+        remind_min = settings.alert_remind_interval_sec / 60
+        msg = f"""⚙️ *설정* (DB 저장)
 
 • 1회 매매 상한: 잔고의 `{settings.risk_max_per_trade_pct}%`
 • 일일 매매 횟수: `{settings.risk_max_daily_trades}회`
 • 최소 유지 잔고: `{settings.risk_min_krw_reserve:,.0f}원`
+• 재알림 간격: `{remind_min:.0f}분`
 
-변경: `/risk max_pct 10` `/risk daily 20` `/risk reserve 50000`"""
+변경:
+`/risk max_pct 10` — 1회 매매 상한
+`/risk daily 20` — 일일 횟수
+`/risk reserve 50000` — 최소 잔고
+`/risk remind 15` — 재알림 간격(분)"""
         await send_message(token, chat_id, msg)
         return
 
@@ -224,13 +230,22 @@ async def _cmd_risk(
         "max_pct": "risk_max_per_trade_pct",
         "daily": "risk_max_daily_trades",
         "reserve": "risk_min_krw_reserve",
+        "remind": "alert_remind_interval_sec",
     }
     db_key = alias_map.get(key_alias)
     if not db_key:
         await send_message(
-            token, chat_id, "❌ 키: `max_pct`, `daily`, `reserve`",
+            token, chat_id,
+            "❌ 키: `max_pct`, `daily`, `reserve`, `remind`",
         )
         return
+
+    # remind는 분 → 초 변환
+    if key_alias == "remind":
+        if value < 1:
+            await send_message(token, chat_id, "❌ 1분 이상 입력하세요.")
+            return
+        value = value * 60  # 분 → 초로 변환하여 저장
 
     # 범위 검증
     if key_alias == "max_pct" and not (0.1 <= value <= 100):
@@ -251,6 +266,7 @@ async def _cmd_risk(
         "max_pct": f"1회 매매 상한 → 잔고의 `{value}%`",
         "daily": f"일일 매매 횟수 → `{int(value)}회`",
         "reserve": f"최소 유지 잔고 → `{value:,.0f}원`",
+        "remind": f"재알림 간격 → `{value / 60:.0f}분`",
     }
     await send_message(
         token, chat_id, f"✅ {label_map[key_alias]} (DB 저장됨)",
