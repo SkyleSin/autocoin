@@ -51,7 +51,8 @@ async def handle_update(
     elif text.startswith("/balance"):
         await _cmd_balance(token, chat_id, settings)
     elif text.startswith("/markets"):
-        await _cmd_markets(token, chat_id, settings)
+        keyword = text[8:].strip().upper() if len(text) > 8 else ""
+        await _cmd_markets(token, chat_id, settings, keyword)
     elif text.startswith("/assets"):
         await _cmd_assets(token, chat_id, session_factory)
     elif text.startswith("/add "):
@@ -77,7 +78,8 @@ async def _cmd_help(token: str, chat_id: str) -> None:
     msg = """🤖 *autocoin 봇 명령어*
 
 *자산 관리:*
-/markets — 빗썸 마켓 목록 조회
+/markets — 빗썸 마켓 목록 (전체)
+/markets BTC — 키워드로 검색
 /assets — 추적 중인 자산 목록
 /add KRW-BTC — 추적 자산 추가
 /remove KRW-BTC — 추적 자산 제거
@@ -95,8 +97,10 @@ async def _cmd_help(token: str, chat_id: str) -> None:
     await send_message(token, chat_id, msg)
 
 
-async def _cmd_markets(token: str, chat_id: str, settings: Settings) -> None:
-    """빗썸 KRW 마켓 목록 조회."""
+async def _cmd_markets(
+    token: str, chat_id: str, settings: Settings, keyword: str = "",
+) -> None:
+    """빗썸 KRW 마켓 목록 조회. keyword로 필터링 가능."""
     try:
         import asyncio
 
@@ -112,19 +116,52 @@ async def _cmd_markets(token: str, chat_id: str, settings: Settings) -> None:
             m for m in markets
             if str(m.get("market", "")).startswith("KRW-")
         ]
+
+        # 키워드 필터 (코인명, 한글명, 영문명)
+        if keyword:
+            filtered = []
+            for m in krw_markets:
+                code = m.get("market", "")
+                coin = code.replace("KRW-", "")
+                name_ko = m.get("korean_name", "")
+                name_en = m.get("english_name", "").upper()
+                if (
+                    coin.startswith(keyword)
+                    or keyword in name_en
+                    or keyword in name_ko
+                ):
+                    filtered.append(m)
+            krw_markets = filtered
+
         krw_markets.sort(key=lambda m: m["market"])
 
-        lines = [f"📋 *빗썸 KRW 마켓* ({len(krw_markets)}개)\n"]
+        if not krw_markets:
+            await send_message(
+                token, chat_id,
+                f"검색 결과 없음: `{keyword}`\n"
+                f"사용법: `/markets` 전체 또는 `/markets BTC`",
+            )
+            return
+
+        header = "📋 *빗썸 KRW 마켓*"
+        if keyword:
+            header += f" (검색: {keyword}, {len(krw_markets)}개)"
+        else:
+            header += f" ({len(krw_markets)}개)"
+        lines = [header + "\n"]
+
         for m in krw_markets:
             code = m["market"]
             name_ko = m.get("korean_name", "")
             name_en = m.get("english_name", "")
             lines.append(f"`{code}` — {name_ko} ({name_en})")
 
-        # 텔레그램 메시지 길이 제한 (4096자)
         text = "\n".join(lines)
         if len(text) > 4000:
-            text = "\n".join(lines[:80]) + f"\n\n... 외 {len(krw_markets) - 80}개"
+            cut = 70
+            text = "\n".join(lines[:cut])
+            text += f"\n\n... 외 {len(krw_markets) - cut + 1}개"
+            text += "\n`/markets 키워드` 로 검색하세요"
 
         await send_message(token, chat_id, text)
     except Exception as e:
