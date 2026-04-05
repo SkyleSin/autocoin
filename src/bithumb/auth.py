@@ -35,6 +35,7 @@ def build_authorization_header(
         "timestamp": int(time.time() * 1000),
     }
     if params:
+        # GET/POST 공통: urlencode → SHA512
         raw = _encode_query_string(params)
         payload["query_hash"] = hashlib.sha512(raw).hexdigest()
         payload["query_hash_alg"] = "SHA512"
