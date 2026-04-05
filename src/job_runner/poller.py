@@ -1,4 +1,4 @@
-"""DB에서 Ready/Failed 잡을 클레임해 `Queue`로 만든 뒤 `(priority, job_id)`를 우선순위 큐에 넣는다."""
+"""DB에서 Ready/Failed 잡을 클레임 → Queue → 우선순위 큐에 적재."""
 
 from __future__ import annotations
 

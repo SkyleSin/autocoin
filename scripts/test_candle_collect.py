@@ -85,7 +85,7 @@ async def main() -> None:
 
     # 4) Candle upsert 테스트
     print("\n=== 4. Candle DB upsert 테스트 ===")
-    from job_runner.worker import _upsert_candles
+    from job_runner.handlers.candle import _upsert_candles
 
     async with session_factory() as session:
         count = await _upsert_candles(session, raw_candles, "1m")

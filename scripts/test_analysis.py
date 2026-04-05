@@ -33,7 +33,7 @@ async def main() -> None:
 
     # 1) 캔들 200개 수집
     print("=== 1. KRW-BTC 1분봉 200개 수집 ===")
-    from job_runner.worker import _upsert_candles
+    from job_runner.handlers.candle import _upsert_candles
 
     def _fetch_200(settings: Settings) -> list[dict]:
         from job_runner.workers import PublicRequester
@@ -60,7 +60,7 @@ async def main() -> None:
 
     # 3) 기술 지표 분석 실행
     print("\n=== 2. 기술 지표 분석 ===")
-    from job_runner.worker import _run_technical_analysis
+    from job_runner.handlers.analysis import _run_technical_analysis
 
     async with session_factory() as session:
         result = await _run_technical_analysis(session, "KRW-BTC", "1m")

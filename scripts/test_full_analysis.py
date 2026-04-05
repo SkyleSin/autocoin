@@ -16,7 +16,7 @@ from analysis.indicators import compute_all
 from analysis.patterns import analyze as analyze_patterns
 from analysis.signal_generator import evaluate
 from analysis.support_resistance import analyze as analyze_sr
-from job_runner.worker import _upsert_candles
+from job_runner.handlers.candle import _upsert_candles
 from models.base import Base
 from models.candle import Candle
 from models.signal import Signal

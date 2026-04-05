@@ -15,7 +15,7 @@ from ai_engine.local_llm import query_ollama
 from ai_engine.prompts import build_analysis_prompt
 from analysis.indicators import compute_all
 from analysis.signal_generator import evaluate
-from job_runner.worker import _upsert_candles
+from job_runner.handlers.candle import _upsert_candles
 from models.base import Base
 from models.candle import Candle
 from models.signal import Signal

@@ -27,7 +27,7 @@ async def main() -> None:
     # 1) 잔고 조회
     print("=== 1. 빗썸 잔고 조회 ===")
     try:
-        from job_runner.worker import _accounts_sync
+        from job_runner.handlers.trade import _accounts_sync
         accounts = await asyncio.to_thread(_accounts_sync, settings)
         for acc in accounts:
             currency = acc.get("currency", "?")

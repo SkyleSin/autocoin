@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from bithumb.auth import build_authorization_header
+
 from .base import CoinServerClientBase
 
 
