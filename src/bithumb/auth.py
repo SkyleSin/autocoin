@@ -13,8 +13,7 @@ import jwt
 
 def _encode_query_string(params: dict[str, Any]) -> bytes:
     pairs: list[tuple[str, str]] = []
-    for key in sorted(params.keys()):
-        value = params[key]
+    for key, value in params.items():
         if isinstance(value, list | tuple):
             for item in value:
                 pairs.append((f"{key}[]", str(item)))
