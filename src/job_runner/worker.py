@@ -489,48 +489,67 @@ async def _execute_job(
         }
         job.status = JobStatus.Complete.value
 
-        # 텔레그램 알림 전송 (차트 이미지 포함)
-        if settings.telegram_bot_token and settings.telegram_chat_id:
-            tech_conf = min(len(tech_reasons) * 0.25, 1.0)
-            alert_text = format_combined_alert(
-                market=market,
-                close_price=close_price,
-                tech_signal=tech_signal,
-                tech_confidence=tech_conf,
-                tech_reasons=tech_reasons,
-                llm_decision=llm_result.decision,
-                llm_confidence=llm_result.confidence,
-                llm_reason=llm_result.reason,
-                indicators=indicators,
-            )
-            # 차트 이미지 생성
-            chart_image: bytes | None = None
-            try:
-                candle_rows = (await session.execute(
-                    select(Candle)
-                    .where(Candle.market == market, Candle.timeframe == timeframe)
-                    .order_by(Candle.open_at.asc())
-                    .limit(200)
-                )).scalars().all()
-                if len(candle_rows) >= 30:
-                    chart_image = generate_chart_from_db_candles(
-                        list(candle_rows),
-                        market=market,
-                        signal_type=llm_result.decision,
-                        sr_analysis=indicators.get("support_resistance"),
-                        pattern_analysis=indicators.get("patterns"),
-                    )
-            except Exception:
-                logger.warning("차트 이미지 생성 실패, 텍스트만 전송", exc_info=True)
-            await send_signal_alert(
-                settings.telegram_bot_token,
-                settings.telegram_chat_id,
-                alert_text,
-                chart_image=chart_image,
-                market=market,
+        # 알림 관리 — 중복 방지, 변경 감지, 재알림 주기
+        if settings.telegram_bot_token and settings.telegram_chat_id and session:
+            from services.alert_service import AlertAction, check_alert
+
+            action = await check_alert(
+                session, market, timeframe,
                 signal_type=llm_result.decision,
-                close_price=close_price,
+                confidence=llm_result.confidence,
+                reasons=tech_reasons,
+                indicators=indicators,
+                remind_interval_sec=settings.alert_remind_interval_sec,
             )
+
+            if action in (AlertAction.NEW, AlertAction.CHANGED, AlertAction.REMIND):
+                tech_conf = min(len(tech_reasons) * 0.25, 1.0)
+                # 변경/재알림 시 접두어
+                prefix = ""
+                if action == AlertAction.CHANGED:
+                    prefix = "🔄 *시그널 변경!*\n\n"
+                elif action == AlertAction.REMIND:
+                    prefix = "🔔 *재알림*\n\n"
+
+                alert_text = prefix + format_combined_alert(
+                    market=market,
+                    close_price=close_price,
+                    tech_signal=tech_signal,
+                    tech_confidence=tech_conf,
+                    tech_reasons=tech_reasons,
+                    llm_decision=llm_result.decision,
+                    llm_confidence=llm_result.confidence,
+                    llm_reason=llm_result.reason,
+                    indicators=indicators,
+                )
+                # 차트 이미지 생성
+                chart_image: bytes | None = None
+                try:
+                    candle_rows = (await session.execute(
+                        select(Candle)
+                        .where(Candle.market == market, Candle.timeframe == timeframe)
+                        .order_by(Candle.open_at.asc())
+                        .limit(200)
+                    )).scalars().all()
+                    if len(candle_rows) >= 30:
+                        chart_image = generate_chart_from_db_candles(
+                            list(candle_rows),
+                            market=market,
+                            signal_type=llm_result.decision,
+                            sr_analysis=indicators.get("support_resistance"),
+                            pattern_analysis=indicators.get("patterns"),
+                        )
+                except Exception:
+                    logger.warning("차트 이미지 생성 실패", exc_info=True)
+                await send_signal_alert(
+                    settings.telegram_bot_token,
+                    settings.telegram_chat_id,
+                    alert_text,
+                    chart_image=chart_image,
+                    market=market,
+                    signal_type=llm_result.decision,
+                    close_price=close_price,
+                )
     elif job.type == "check_balance":
         if api_rate_limiter is not None:
             await api_rate_limiter.acquire()

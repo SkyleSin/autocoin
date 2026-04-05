@@ -19,6 +19,7 @@ from collector.scheduler import candle_scheduler
 from job_runner.poller import SHUTDOWN_QUEUE_ITEM, JobQueueItem, poller
 from job_runner.rate_limit import AsyncSlidingWindowRateLimiter
 from job_runner.worker import worker as job_worker
+from models.active_alert import ActiveAlert
 from models.app_config import AppConfig
 from models.candle import Candle
 from models.job import Job
@@ -66,6 +67,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 Signal.__table__,
                 Trade.__table__,
                 AppConfig.__table__,
+                ActiveAlert.__table__,
             ):
                 await conn.run_sync(
                     lambda sync_conn, t=table: t.create(sync_conn, checkfirst=True),

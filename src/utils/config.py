@@ -87,6 +87,12 @@ class Settings(BaseSettings):
         validation_alias="OLLAMA_TIMEOUT",
     )
 
+    alert_remind_interval_sec: float = Field(
+        default=600.0,
+        description="동일 시그널 재알림 간격(초). 기본 600초(10분).",
+        validation_alias="AUTOCOIN_ALERT_REMIND_INTERVAL_SEC",
+    )
+
     # 리스크 설정 기본값 (DB에 저장된 값이 있으면 서버 시작 시 덮어씀)
     risk_max_per_trade_pct: float = 5.0
     risk_max_daily_trades: int = 10
