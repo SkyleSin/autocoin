@@ -27,22 +27,32 @@ class PrivateRequester(CoinServerClientBase):
     ) -> Any:
         access, secret = self._require_keys()
         m = method.upper()
+
+        # query_hash 계산용 파라미터
         hash_params: dict[str, Any] | None = None
         if params:
             hash_params = params
-        if m in {"POST", "PUT", "DELETE", "PATCH"} and json_body is not None:
+        if json_body is not None:
             hash_params = json_body
+
         auth = build_authorization_header(access, secret, params=hash_params)
         headers = {"Authorization": auth}
-        if m in {"POST", "PUT", "PATCH", "DELETE"} and json_body is not None:
+
+        if m == "GET":
+            r = self._client.request(m, path, params=params, headers=headers)
+        elif json_body is not None:
+            # POST + JSON body
             headers["Content-Type"] = "application/json; charset=utf-8"
             r = self._client.request(
-                m,
-                path,
-                params=params,
-                headers=headers,
-                json=json_body,
+                m, path, headers=headers, json=json_body,
+            )
+        elif params is not None:
+            # POST + form data (빗썸 주문 등)
+            headers["Content-Type"] = "application/x-www-form-urlencoded"
+            r = self._client.request(
+                m, path, headers=headers, data=params,
             )
         else:
-            r = self._client.request(m, path, params=params, headers=headers)
+            r = self._client.request(m, path, headers=headers)
+
         return self._parse_response(r)
