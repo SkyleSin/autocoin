@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -186,6 +187,27 @@ async def handle_analyze_local_llm(
 
     if action not in (AlertAction.NEW, AlertAction.CHANGED, AlertAction.REMIND):
         return
+
+    # SELL 시그널은 해당 코인 보유 시에만 알림
+    if llm_result.decision == "SELL":
+        try:
+            from job_runner.handlers.trade import _accounts_sync
+
+            accounts = await asyncio.to_thread(_accounts_sync, settings)
+            coin_currency = market.split("-")[1] if "-" in market else ""
+            coin_acc = next(
+                (a for a in accounts if a.get("currency") == coin_currency),
+                None,
+            )
+            coin_balance = float(coin_acc["balance"]) if coin_acc else 0
+            if coin_balance <= 0:
+                logger.info(
+                    "SELL 알림 생략: %s 보유량 없음", market,
+                )
+                return
+        except Exception:
+            logger.warning("SELL 보유 확인 실패, 알림 생략", exc_info=True)
+            return
 
     tech_conf = min(len(tech_reasons) * 0.25, 1.0)
     prefix = ""
