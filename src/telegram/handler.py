@@ -50,6 +50,8 @@ async def handle_update(
         await _cmd_help(token, chat_id)
     elif text.startswith("/balance"):
         await _cmd_balance(token, chat_id, settings)
+    elif text.startswith("/markets"):
+        await _cmd_markets(token, chat_id, settings)
     elif text.startswith("/assets"):
         await _cmd_assets(token, chat_id, session_factory)
     elif text.startswith("/add "):
@@ -75,6 +77,7 @@ async def _cmd_help(token: str, chat_id: str) -> None:
     msg = """🤖 *autocoin 봇 명령어*
 
 *자산 관리:*
+/markets — 빗썸 마켓 목록 조회
 /assets — 추적 중인 자산 목록
 /add KRW-BTC — 추적 자산 추가
 /remove KRW-BTC — 추적 자산 제거
@@ -90,6 +93,42 @@ async def _cmd_help(token: str, chat_id: str) -> None:
 /risk daily 20 — 일일 매매 횟수 변경
 /risk reserve 50000 — 최소 유지 잔고 변경 (원)"""
     await send_message(token, chat_id, msg)
+
+
+async def _cmd_markets(token: str, chat_id: str, settings: Settings) -> None:
+    """빗썸 KRW 마켓 목록 조회."""
+    try:
+        import asyncio
+
+        from job_runner.workers import PublicRequester
+
+        def _fetch(s: Settings) -> list[dict]:
+            with PublicRequester(s) as pub:
+                return pub.request("GET", "/v1/market/all")
+
+        markets = await asyncio.to_thread(_fetch, settings)
+        # KRW 마켓만 필터
+        krw_markets = [
+            m for m in markets
+            if str(m.get("market", "")).startswith("KRW-")
+        ]
+        krw_markets.sort(key=lambda m: m["market"])
+
+        lines = [f"📋 *빗썸 KRW 마켓* ({len(krw_markets)}개)\n"]
+        for m in krw_markets:
+            code = m["market"]
+            name_ko = m.get("korean_name", "")
+            name_en = m.get("english_name", "")
+            lines.append(f"`{code}` — {name_ko} ({name_en})")
+
+        # 텔레그램 메시지 길이 제한 (4096자)
+        text = "\n".join(lines)
+        if len(text) > 4000:
+            text = "\n".join(lines[:80]) + f"\n\n... 외 {len(krw_markets) - 80}개"
+
+        await send_message(token, chat_id, text)
+    except Exception as e:
+        await send_message(token, chat_id, f"❌ 마켓 조회 실패: {e}")
 
 
 async def _cmd_balance(token: str, chat_id: str, settings: Settings) -> None:
