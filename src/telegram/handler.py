@@ -353,7 +353,12 @@ async def _handle_callback(
                 job = Job(
                     type="check_balance",
                     status=JobStatus.Ready.value,
-                    content={"trigger": "telegram", "market": market, "side": side},
+                    content={
+                        "trigger": "telegram",
+                        "market": market,
+                        "side": side,
+                        "price": price,
+                    },
                     priority=5,
                 )
                 session.add(job)

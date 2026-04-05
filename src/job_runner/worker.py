@@ -229,6 +229,105 @@ async def _run_technical_analysis(
     }
 
 
+async def _chain_trade_from_balance(
+    session: AsyncSession,
+    settings: Settings,
+    accounts: list[dict[str, Any]],
+    content: dict[str, Any],
+) -> None:
+    """check_balance 완료 후 → 리스크 검증 → place_order 또는 거부 알림."""
+    from executor.risk_manager import check_risk
+
+    market = str(content.get("market", ""))
+    side = str(content.get("side", ""))
+    price = float(content.get("price", 0))
+    token = settings.telegram_bot_token
+    chat_id = settings.telegram_chat_id
+
+    if not market or side not in ("BUY", "SELL"):
+        return
+
+    bithumb_side = "bid" if side == "BUY" else "ask"
+
+    # KRW 잔고 추출
+    krw_acc = next((a for a in accounts if a.get("currency") == "KRW"), None)
+    krw_balance = float(krw_acc["balance"]) if krw_acc else 0
+
+    # 코인 잔고 추출 (매도 시)
+    coin_currency = market.split("-")[1] if "-" in market else ""
+    coin_acc = next(
+        (a for a in accounts if a.get("currency") == coin_currency), None,
+    )
+    coin_balance = float(coin_acc["balance"]) if coin_acc else 0
+
+    # 매매 금액 결정
+    if bithumb_side == "bid":
+        intended = krw_balance * (settings.risk_max_per_trade_pct / 100)
+    else:
+        intended = coin_balance * price
+        if coin_balance <= 0:
+            if token and chat_id:
+                await send_signal_alert(
+                    token, chat_id, f"❌ `{market}` 매도 불가 — 보유 코인 없음",
+                )
+            return
+
+    # 리스크 검증
+    risk = await check_risk(
+        session, settings,
+        side=bithumb_side, market=market,
+        krw_balance=krw_balance,
+        intended_amount_krw=intended,
+    )
+
+    if not risk.allowed:
+        if token and chat_id:
+            await send_signal_alert(
+                token, chat_id,
+                f"❌ `{market}` {side} 주문 거부\n사유: {risk.reason}",
+            )
+        return
+
+    # place_order Job 생성
+    if bithumb_side == "bid":
+        order_content = {
+            "market": market,
+            "side": "bid",
+            "price": str(int(risk.max_amount_krw)),
+            "ord_type": "price",  # 시장가 매수 (금액 지정)
+        }
+    else:
+        order_content = {
+            "market": market,
+            "side": "ask",
+            "volume": str(coin_balance),
+            "ord_type": "market",  # 시장가 매도
+        }
+
+    order_job = Job(
+        type="place_order",
+        status=JobStatus.Ready.value,
+        content=order_content,
+        priority=1,
+    )
+    session.add(order_job)
+
+    if token and chat_id:
+        if bithumb_side == "bid":
+            msg = (
+                f"✅ `{market}` 매수 주문 생성\n"
+                f"금액: `{risk.max_amount_krw:,.0f} KRW` (시장가)\n"
+                f"KRW 잔고: `{krw_balance:,.0f}`"
+            )
+        else:
+            msg = (
+                f"✅ `{market}` 매도 주문 생성\n"
+                f"수량: `{coin_balance}` {coin_currency} (시장가)\n"
+                f"KRW 잔고: `{krw_balance:,.0f}`"
+            )
+        await send_signal_alert(token, chat_id, msg)
+
+
 def _orders_chance_sync(settings: Settings, market: str) -> dict[str, Any]:
     """GET /v1/orders/chance — 주문 가능 정보."""
     with PrivateRequester(settings) as prv:
@@ -438,6 +537,16 @@ async def _execute_job(
         data = await asyncio.to_thread(_accounts_sync, settings)
         job.status = JobStatus.Complete.value
         job.response = {"accounts": data}
+
+        # 텔레그램 매매 버튼에서 트리거된 경우 → 리스크 검증 → place_order 체이닝
+        if (
+            session is not None
+            and job.content
+            and job.content.get("trigger") == "telegram"
+        ):
+            await _chain_trade_from_balance(
+                session, settings, data, job.content,
+            )
     elif job.type == "place_order":
         if not job.content or not str(job.content.get("market", "")).strip():
             raise ValueError("place_order 잡에 content.market 이 필요합니다.")
@@ -458,6 +567,19 @@ async def _execute_job(
         )
         job.status = JobStatus.Complete.value
         job.response = {"order": data}
+
+        # 주문 결과 텔레그램 알림
+        if settings.telegram_bot_token and settings.telegram_chat_id:
+            side_ko = "매수" if side == "bid" else "매도"
+            order_uuid = data.get("uuid", "?")
+            order_state = data.get("state", "?")
+            await send_signal_alert(
+                settings.telegram_bot_token,
+                settings.telegram_chat_id,
+                f"📝 `{market}` {side_ko} 주문 완료\n"
+                f"주문 ID: `{order_uuid}`\n"
+                f"상태: `{order_state}`",
+            )
     elif job.type == "check_order":
         if not job.content or not str(job.content.get("uuid", "")).strip():
             raise ValueError("check_order 잡에 content.uuid 가 필요합니다.")
