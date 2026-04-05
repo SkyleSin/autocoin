@@ -28,9 +28,9 @@ class PrivateRequester(CoinServerClientBase):
         access, secret = self._require_keys()
         m = method.upper()
         hash_params: dict[str, Any] | None = None
-        if m == "GET" and params:
+        if params:
             hash_params = params
-        elif m in {"POST", "PUT", "DELETE", "PATCH"} and json_body is not None:
+        if m in {"POST", "PUT", "DELETE", "PATCH"} and json_body is not None:
             hash_params = json_body
         auth = build_authorization_header(access, secret, params=hash_params)
         headers = {"Authorization": auth}

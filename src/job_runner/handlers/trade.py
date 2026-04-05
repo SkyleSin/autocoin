@@ -40,17 +40,17 @@ def _place_order_sync(
     price: str | None = None,
     ord_type: str = "limit",
 ) -> dict[str, Any]:
-    body: dict[str, Any] = {
+    params: dict[str, Any] = {
         "market": market,
         "side": side,
         "ord_type": ord_type,
     }
     if volume is not None:
-        body["volume"] = volume
+        params["volume"] = volume
     if price is not None:
-        body["price"] = price
+        params["price"] = price
     with PrivateRequester(settings) as prv:
-        data = prv.request("POST", "/v1/orders", json_body=body)
+        data = prv.request("POST", "/v1/orders", params=params)
     if not isinstance(data, dict):
         raise JobExecutionFailed("orders 응답이 객체가 아닙니다.")
     return data
