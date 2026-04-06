@@ -53,3 +53,9 @@ class Signal(Base):
         default=False,
         comment="매매 실행 여부",
     )
+    verified: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        comment="적중률 검증 완료 여부",
+    )

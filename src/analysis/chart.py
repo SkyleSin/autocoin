@@ -200,6 +200,8 @@ def generate_chart(
     support_levels: list[float] | None = None,
     resistance_levels: list[float] | None = None,
     patterns: list[dict[str, Any]] | None = None,
+    resistance_trendline: dict[str, Any] | None = None,
+    support_trendline: dict[str, Any] | None = None,
 ) -> bytes:
     """캔들 데이터로 차트 이미지(PNG bytes) 생성."""
     # DataFrame 구성
@@ -294,6 +296,30 @@ def generate_chart(
                 fontsize=8, color="#ef5350", va="center",
             )
 
+    # 추세선 (대각선)
+    for tl, color, label in [
+        (resistance_trendline, "#ef5350", "저항"),
+        (support_trendline, "#26a69a", "지지"),
+    ]:
+        if tl:
+            s_idx = tl["start_idx"]
+            e_idx = min(tl["end_idx"], len(df) - 1)
+            s_price = tl["start_price"]
+            e_price = tl["end_price"]
+            # 추세선을 차트 우측 끝까지 연장
+            if e_idx > s_idx:
+                slope = (e_price - s_price) / (e_idx - s_idx)
+                ext_idx = len(df) - 1
+                ext_price = s_price + slope * (ext_idx - s_idx)
+                ax_main.plot(
+                    [s_idx, ext_idx], [s_price, ext_price],
+                    color=color, linestyle="--", linewidth=1.5, alpha=0.8,
+                )
+                ax_main.text(
+                    ext_idx, ext_price, f"  {label}",
+                    fontsize=8, color=color, va="center",
+                )
+
     # 시그널 표시 (마지막 봉에 화살표)
     if signal_type in ("BUY", "SELL"):
         last_idx = len(df) - 1
@@ -357,8 +383,12 @@ def generate_chart_from_db_candles(
                 resistance_levels.append(lv["price"])
 
     patterns = []
+    resistance_trendline = None
+    support_trendline = None
     if pattern_analysis:
         patterns = pattern_analysis.get("patterns", [])
+        resistance_trendline = pattern_analysis.get("resistance_trendline")
+        support_trendline = pattern_analysis.get("support_trendline")
 
     return generate_chart(
         candle_dicts,
@@ -367,4 +397,6 @@ def generate_chart_from_db_candles(
         support_levels=support_levels or None,
         resistance_levels=resistance_levels or None,
         patterns=patterns or None,
+        resistance_trendline=resistance_trendline,
+        support_trendline=support_trendline,
     )

@@ -16,6 +16,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from collector.scheduler import candle_scheduler
+from models.pattern_accuracy import PatternAccuracy
 from job_runner.poller import SHUTDOWN_QUEUE_ITEM, JobQueueItem, poller
 from job_runner.rate_limit import AsyncSlidingWindowRateLimiter
 from job_runner.worker import worker as job_worker
@@ -68,6 +69,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 Trade.__table__,
                 AppConfig.__table__,
                 ActiveAlert.__table__,
+                PatternAccuracy.__table__,
             ):
                 await conn.run_sync(
                     lambda sync_conn, t=table: t.create(sync_conn, checkfirst=True),
@@ -125,11 +127,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             name="telegram-poller",
         )
 
+        from services.report_scheduler import report_scheduler
+        report_scheduler_task = asyncio.create_task(
+            report_scheduler(session_factory, settings),
+            name="report-scheduler",
+        )
+
         app.state.job_queue = job_queue
         app.state.job_poller_task = poller_task
         app.state.job_worker_tasks = worker_tasks
         app.state.candle_scheduler_task = candle_scheduler_task
         app.state.telegram_poller_task = telegram_poller_task
+        app.state.report_scheduler_task = report_scheduler_task
         logger.info(
             "job runner: poller=1 workers=%s bithumb_max_rps=%s "
             "candle_interval=%.0fs telegram=%s",
@@ -146,6 +155,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await _send_startup_alert(session_factory, settings)
 
         yield
+
+        logger.info("lifespan: stop report_scheduler")
+        report_scheduler_task.cancel()
+        await asyncio.gather(report_scheduler_task, return_exceptions=True)
 
         logger.info("lifespan: stop telegram_poller")
         telegram_poller_task.cancel()

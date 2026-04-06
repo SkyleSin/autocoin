@@ -60,7 +60,7 @@ async def _run_technical_analysis(
     if snap is None:
         return {"status": "compute_failed", "candle_count": len(candles)}
 
-    pat = analyze_patterns(highs, lows, closes)
+    pat = analyze_patterns(highs, lows, closes, timeframe=timeframe)
     sr = analyze_sr(highs, lows, closes)
 
     close_price = float(candles[-1].close)

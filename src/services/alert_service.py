@@ -22,6 +22,25 @@ class AlertAction:
     REMIND = "remind"          # 동일 시그널 유지, 재알림 시간 도래 → 재알림
     SKIP = "skip"              # 동일 시그널, 재알림 시간 미도래 → 무시
     CLEARED = "cleared"        # HOLD로 전환 → 기존 삭제, 알림 없음
+    PASSED = "passed"          # 사용자가 패스, 동일 패턴 유지 → 무시
+
+
+async def mark_passed(
+    session: AsyncSession,
+    market: str,
+) -> bool:
+    """사용자 패스 → ActiveAlert에 passed 마킹. 마켓의 모든 타임프레임 대상."""
+    results = (await session.execute(
+        select(ActiveAlert).where(ActiveAlert.market == market)
+    )).scalars().all()
+    if not results:
+        return False
+    now = datetime.now(UTC)
+    for alert in results:
+        alert.passed_at = now
+        alert.passed_reasons = alert.reasons
+        logger.info("alert passed: %s %s", market, alert.timeframe)
+    return True
 
 
 async def check_alert(
@@ -85,7 +104,26 @@ async def check_alert(
         )
         return AlertAction.CHANGED
 
-    # 동일 시그널 — 재알림 시간 확인
+    # 동일 시그널 — 패스 상태 확인
+    if existing.passed_at is not None:
+        new_reasons = json.dumps(reasons, ensure_ascii=False)
+        if existing.passed_reasons == new_reasons:
+            # 동일 패턴 유지 → 패스 유지
+            return AlertAction.PASSED
+        # 패턴 변경 → 패스 해제, 새 알림
+        existing.passed_at = None
+        existing.passed_reasons = None
+        existing.confidence = confidence
+        existing.reasons = new_reasons
+        existing.indicators = indicators
+        existing.last_alerted_at = now
+        logger.info(
+            "alert pass cleared (pattern changed): %s %s %s",
+            market, timeframe, signal_type,
+        )
+        return AlertAction.CHANGED
+
+    # 재알림 시간 확인
     elapsed = (now - existing.last_alerted_at).total_seconds()
     if elapsed >= remind_interval_sec:
         existing.confidence = confidence

@@ -67,6 +67,8 @@ async def handle_update(
         await _cmd_history(token, chat_id, session_factory)
     elif text.startswith("/status"):
         await _cmd_status(token, chat_id, session_factory, settings)
+    elif text.startswith("/report"):
+        await _cmd_report(token, chat_id, session_factory, settings)
     else:
         await send_message(token, chat_id, "알 수 없는 명령어입니다. /help 를 입력하세요.")
 
@@ -93,7 +95,10 @@ async def _cmd_help(token: str, chat_id: str) -> None:
 /risk — 현재 리스크 설정 보기
 /risk max\\_pct 10 — 1회 매매 상한 변경 (%)
 /risk daily 20 — 일일 매매 횟수 변경
-/risk reserve 50000 — 최소 유지 잔고 변경 (원)"""
+/risk reserve 50000 — 최소 유지 잔고 변경 (원)
+
+*리포트:*
+/report — 수익률 + 패턴 적중률 리포트"""
     await send_message(token, chat_id, msg)
 
 
@@ -408,6 +413,30 @@ async def _cmd_status(
     await send_message(token, chat_id, "\n".join(lines))
 
 
+async def _cmd_report(
+    token: str,
+    chat_id: str,
+    sf: async_sessionmaker[AsyncSession],
+    settings: Settings,
+) -> None:
+    """수익률 + 적중률 리포트."""
+    await send_message(token, chat_id, "⏳ 리포트 생성 중...")
+    try:
+        from services.report_scheduler import _fetch_balances
+        from services.report_service import generate_report
+
+        accounts, ticker_prices = await _fetch_balances(settings)
+        async with sf() as session:
+            report_text = await generate_report(
+                session, accounts=accounts, ticker_prices=ticker_prices,
+            )
+            await session.commit()
+        await send_message(token, chat_id, report_text)
+    except Exception:
+        logger.exception("리포트 생성 실패")
+        await send_message(token, chat_id, "❌ 리포트 생성 중 오류가 발생했습니다.")
+
+
 # ── 콜백 핸들러 (인라인 버튼) ──
 
 
@@ -484,8 +513,21 @@ async def _handle_callback(
                 )
                 session.add(job)
                 await session.commit()
-    elif data == "trade_pass":
-        await send_message(token, chat_id, "⏭️ 시그널을 패스했습니다.")
+    elif data.startswith("trade_pass"):
+        # trade_pass:{market} 또는 레거시 trade_pass
+        parts = data.split(":")
+        pass_market = parts[1] if len(parts) >= 2 else ""
+        if pass_market:
+            from services.alert_service import mark_passed
+            async with sf() as session:
+                await mark_passed(session, pass_market)
+                await session.commit()
+            await send_message(
+                token, chat_id,
+                f"⏭️ `{pass_market}` 시그널을 패스했습니다.\n패턴이 변경되면 다시 알림됩니다.",
+            )
+        else:
+            await send_message(token, chat_id, "⏭️ 시그널을 패스했습니다.")
     else:
         logger.warning("telegram: 알 수 없는 콜백 data=%s", data)
 

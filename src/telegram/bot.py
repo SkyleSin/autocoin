@@ -102,7 +102,7 @@ def make_signal_buttons(
                     },
                     {
                         "text": "⏭️ 패스",
-                        "callback_data": "trade_pass",
+                        "callback_data": f"trade_pass:{market}",
                     },
                 ],
             ],
@@ -123,7 +123,7 @@ def make_signal_buttons(
             row = []
     if row:
         rows.append(row)
-    rows.append([{"text": "⏭️ 패스", "callback_data": "trade_pass"}])
+    rows.append([{"text": "⏭️ 패스", "callback_data": f"trade_pass:{market}"}])
 
     return {"inline_keyboard": rows}
 

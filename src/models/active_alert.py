@@ -38,3 +38,11 @@ class ActiveAlert(Base):
         DateTime(timezone=True), nullable=False,
         comment="마지막 텔레그램 알림 전송 시각",
     )
+    passed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None,
+        comment="사용자 패스 시각 (NULL이면 패스 안 함)",
+    )
+    passed_reasons: Mapped[str | None] = mapped_column(
+        Text, nullable=True, default=None,
+        comment="패스 당시 reasons (JSON). 패턴 변경 감지에 사용",
+    )
