@@ -461,16 +461,42 @@ async def _handle_callback(
             market = parts[1]
             side = parts[2]
             price = float(parts[3])
+
+            # 잔고 조회 + 예상 금액 표시
+            balance_info = ""
+            try:
+                from bithumb.account import BithumbAccount
+                client = BithumbAccount(settings)
+                krw_acc = client.get_balance("KRW")
+                krw_bal = float(krw_acc["balance"]) if krw_acc else 0
+                available = max(0, krw_bal - settings.risk_min_krw_reserve)
+                balance_info = (
+                    f"\n💰 KRW 잔고: `{krw_bal:,.0f}원`"
+                    f"\n💵 사용 가능: `{available:,.0f}원`"
+                )
+            except Exception:
+                pass
+
             await send_message(
                 token, chat_id,
                 f"⏳ `{market}` {side} 주문을 준비합니다...\n"
-                f"현재가: `{price:,.0f} KRW`\n\n"
-                f"잔고 확인 후 리스크 검증을 진행합니다.",
+                f"현재가: `{price:,.0f} KRW`"
+                f"{balance_info}\n\n"
+                f"리스크 검증 후 주문을 진행합니다.",
             )
-            # 실제 주문은 place_order Job으로 처리
+
+            # ActiveAlert 삭제 (실행했으니 알림 불필요)
             async with sf() as session:
+                from models.active_alert import ActiveAlert
                 from models.job import Job
                 from models.job_status import JobStatus
+
+                existing_alerts = (await session.execute(
+                    select(ActiveAlert).where(ActiveAlert.market == market)
+                )).scalars().all()
+                for alert in existing_alerts:
+                    await session.delete(alert)
+
                 job = Job(
                     type="check_balance",
                     status=JobStatus.Ready.value,
@@ -491,14 +517,43 @@ async def _handle_callback(
             market = parts[1]
             price = float(parts[2])
             sell_pct = int(parts[3])
+
+            # 보유량 표시
+            holding_info = ""
+            try:
+                from bithumb.account import BithumbAccount
+                client = BithumbAccount(settings)
+                coin_currency = market.split("-")[1] if "-" in market else ""
+                coin_acc = client.get_balance(coin_currency)
+                coin_bal = float(coin_acc["balance"]) if coin_acc else 0
+                sell_vol = coin_bal * (sell_pct / 100)
+                sell_krw = sell_vol * price
+                holding_info = (
+                    f"\n💰 보유: `{coin_bal:.4f}` {coin_currency}"
+                    f"\n💵 매도 수량: `{sell_vol:.4f}` ≈ `{sell_krw:,.0f}원`"
+                )
+            except Exception:
+                pass
+
             await send_message(
                 token, chat_id,
                 f"⏳ `{market}` 매도 {sell_pct}% 주문 준비 중...\n"
-                f"현재가: `{price:,.0f} KRW`",
+                f"현재가: `{price:,.0f} KRW`"
+                f"{holding_info}",
             )
+
+            # ActiveAlert 삭제
             async with sf() as session:
+                from models.active_alert import ActiveAlert
                 from models.job import Job
                 from models.job_status import JobStatus
+
+                existing_alerts = (await session.execute(
+                    select(ActiveAlert).where(ActiveAlert.market == market)
+                )).scalars().all()
+                for alert in existing_alerts:
+                    await session.delete(alert)
+
                 job = Job(
                     type="check_balance",
                     status=JobStatus.Ready.value,
