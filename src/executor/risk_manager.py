@@ -40,7 +40,6 @@ async def check_risk(
     2. 일일 매매 횟수 제한
     3. 최소 KRW 잔고 유지
     """
-    max_per_trade_pct = settings.risk_max_per_trade_pct
     max_daily_trades = settings.risk_max_daily_trades
     min_krw_reserve = settings.risk_min_krw_reserve
 
@@ -53,20 +52,7 @@ async def check_risk(
             max_amount_krw=0,
         )
 
-    # 2) 1회 매매 금액 상한
-    max_amount = krw_balance * (max_per_trade_pct / 100)
-    if intended_amount_krw > max_amount:
-        return RiskCheck(
-            allowed=False,
-            reason=(
-                f"1회 매매 상한 초과 "
-                f"({intended_amount_krw:,.0f} > {max_amount:,.0f}, "
-                f"잔고의 {max_per_trade_pct}%)"
-            ),
-            max_amount_krw=max_amount,
-        )
-
-    # 3) 일일 매매 횟수
+    # 2) 일일 매매 횟수
     today_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
     daily_count_result = await session.execute(
         select(func.count(Trade.id)).where(
@@ -82,8 +68,8 @@ async def check_risk(
             max_amount_krw=0,
         )
 
-    # 사용 가능 금액 = min(의도 금액, 상한, 가용 잔고)
-    final_amount = min(intended_amount_krw, max_amount, available)
+    # 사용 가능 금액 = min(의도 금액, 가용 잔고)
+    final_amount = min(intended_amount_krw, available)
 
     return RiskCheck(
         allowed=True,

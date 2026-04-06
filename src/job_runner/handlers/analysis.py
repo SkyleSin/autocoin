@@ -17,6 +17,7 @@ from analysis.indicators import compute_all
 from analysis.patterns import analyze as analyze_patterns
 from analysis.signal_generator import evaluate
 from analysis.support_resistance import analyze as analyze_sr
+from models.active_alert import ActiveAlert
 from models.candle import Candle
 from models.job import Job
 from models.job_status import JobStatus
@@ -39,10 +40,10 @@ async def _run_technical_analysis(
     result_rows = await session.execute(
         select(Candle)
         .where(Candle.market == market, Candle.timeframe == timeframe)
-        .order_by(Candle.open_at.asc())
+        .order_by(Candle.open_at.desc())
         .limit(candle_limit)
     )
-    candles = list(result_rows.scalars().all())
+    candles = list(reversed(result_rows.scalars().all()))
 
     if len(candles) < 26:
         return {
@@ -154,12 +155,19 @@ async def handle_analyze_local_llm(
         num_gpu=settings.ollama_num_gpu,
     )
 
+    enriched_indicators = {
+        **(indicators or {}),
+        "llm_reason": llm_result.reason,
+        "tech_reasons": tech_reasons,
+        "llm_raw_response": llm_result.raw_response[:1000],
+    }
+
     signal = Signal(
         market=market,
         timeframe=timeframe,
         signal_type=llm_result.decision,
         confidence=llm_result.confidence,
-        indicators=indicators,
+        indicators=enriched_indicators,
         source="local_llm",
     )
     session.add(signal)
@@ -176,19 +184,8 @@ async def handle_analyze_local_llm(
     if not (settings.telegram_bot_token and settings.telegram_chat_id):
         return
 
-    action = await check_alert(
-        session, market, timeframe,
-        signal_type=llm_result.decision,
-        confidence=llm_result.confidence,
-        reasons=tech_reasons,
-        indicators=indicators,
-        remind_interval_sec=settings.alert_remind_interval_sec,
-    )
-
-    if action not in (AlertAction.NEW, AlertAction.CHANGED, AlertAction.REMIND):
-        return
-
-    # SELL 시그널은 해당 코인 보유 시에만 알림
+    # SELL 시그널 → 보유량 확인을 check_alert 앞에서 수행
+    # 보유량 없으면 ActiveAlert 생성 방지 + 기존 것 삭제
     if llm_result.decision == "SELL":
         try:
             from job_runner.handlers.trade import _accounts_sync
@@ -201,13 +198,35 @@ async def handle_analyze_local_llm(
             )
             coin_balance = float(coin_acc["balance"]) if coin_acc else 0
             if coin_balance <= 0:
-                logger.info(
-                    "SELL 알림 생략: %s 보유량 없음", market,
-                )
+                existing = (await session.execute(
+                    select(ActiveAlert).where(
+                        ActiveAlert.market == market,
+                        ActiveAlert.timeframe == timeframe,
+                    )
+                )).scalar_one_or_none()
+                if existing:
+                    await session.delete(existing)
+                    logger.info(
+                        "SELL 보유량 없음 → ActiveAlert 삭제: %s %s", market, timeframe,
+                    )
+                else:
+                    logger.info("SELL 알림 생략: %s 보유량 없음", market)
                 return
         except Exception:
             logger.warning("SELL 보유 확인 실패, 알림 생략", exc_info=True)
             return
+
+    action = await check_alert(
+        session, market, timeframe,
+        signal_type=llm_result.decision,
+        confidence=llm_result.confidence,
+        reasons=tech_reasons,
+        indicators=indicators,
+        remind_interval_sec=settings.alert_remind_interval_sec,
+    )
+
+    if action not in (AlertAction.NEW, AlertAction.CHANGED, AlertAction.REMIND):
+        return
 
     tech_conf = min(len(tech_reasons) * 0.25, 1.0)
     prefix = ""
@@ -230,12 +249,12 @@ async def handle_analyze_local_llm(
 
     chart_image: bytes | None = None
     try:
-        candle_rows = (await session.execute(
+        candle_rows = list(reversed((await session.execute(
             select(Candle)
             .where(Candle.market == market, Candle.timeframe == timeframe)
-            .order_by(Candle.open_at.asc())
+            .order_by(Candle.open_at.desc())
             .limit(200)
-        )).scalars().all()
+        )).scalars().all()))
         if len(candle_rows) >= 30:
             chart_image = generate_chart_from_db_candles(
                 list(candle_rows),

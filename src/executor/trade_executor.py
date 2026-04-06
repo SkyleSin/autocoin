@@ -40,10 +40,10 @@ async def execute_trade(
     bithumb_side = "bid" if side == "BUY" else "ask"
 
     # 매매 금액 결정 (confidence 기반 스케일링)
-    base_pct = settings.risk_max_per_trade_pct
-    # confidence가 높을수록 비중 확대 (0.5~1.0 → 50~100%)
+    # 포지션 사이징은 calculate_position에서 처리, 여기서는 가용 잔고 기반
     scale = max(0.5, min(confidence, 1.0))
-    intended_amount = krw_balance * (base_pct / 100) * scale
+    available = krw_balance - settings.risk_min_krw_reserve
+    intended_amount = max(0, available) * scale
 
     # 매도 시: 보유 코인 기준
     if bithumb_side == "ask":
