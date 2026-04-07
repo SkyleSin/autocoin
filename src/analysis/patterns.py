@@ -12,7 +12,6 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-
 # ── 데이터 클래스 ──
 
 
@@ -135,7 +134,10 @@ def _fit_trendline(indices: list[int], prices: list[float]) -> Trendline | None:
         return None
     x_mean = sum(indices) / n
     y_mean = sum(prices) / n
-    numer = sum((x - x_mean) * (y - y_mean) for x, y in zip(indices, prices))
+    numer = sum(
+        (x - x_mean) * (y - y_mean)
+        for x, y in zip(indices, prices, strict=True)
+    )
     denom = sum((x - x_mean) ** 2 for x in indices)
     if denom == 0:
         return None
@@ -367,13 +369,9 @@ def _classify_trendline_patterns(
             "고점 하락 + 저점 상승 → 수렴 중, 방향 미확정",
         ))
 
-    # 상승쐐기: 저항·지지 모두 상승 + 수렴 → 하단 이탈 시 매도
+    # 상승쐐기: 비활성화 — 백테스트 적중률 0~23%
     elif res_rising and sup_rising and converging:
-        if current < sup_current:
-            patterns.append(PatternMatch(
-                "rising_wedge", "상승쐐기형", "SELL", 75,
-                "고점·저점 상승하며 수렴, 하단 이탈 → 하락 전환",
-            ))
+        pass  # noqa: SIM108
 
     # 하락쐐기: 저항·지지 모두 하락 + 수렴 → 상단 돌파 시 매수
     elif res_falling and sup_falling and converging:
@@ -524,13 +522,12 @@ def analyze(
     avg_price = float(closes.mean())
 
     # 1) 구조적 패턴 (고점/저점 + 넥라인)
+    # 비활성화: 쌍바닥(0%), 역머리어깨(0~33%) — 백테스트 적중률 기반
     structural_detectors = [
         lambda: _detect_double_top(highs, closes, order),
-        lambda: _detect_double_bottom(lows, closes, order),
         lambda: _detect_triple_top(highs, closes, order),
         lambda: _detect_triple_bottom(lows, closes, order),
         lambda: _detect_head_and_shoulders(highs, closes, order),
-        lambda: _detect_inverse_head_and_shoulders(lows, closes, order),
     ]
     for detect in structural_detectors:
         result = detect()

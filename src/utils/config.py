@@ -88,7 +88,7 @@ class Settings(BaseSettings):
     )
 
     # 런타임 설정 기본값 (DB에 저장된 값이 있으면 서버 시작 시 덮어씀)
-    alert_remind_interval_sec: float = 600.0
+    alert_remind_interval_sec: float = 14400.0  # 4시간 (재알림 + CHANGED 쿨다운)
     risk_max_per_trade_pct: float = 5.0
     risk_max_daily_trades: int = 10
     risk_min_krw_reserve: float = 100_000.0
@@ -109,6 +109,11 @@ class Settings(BaseSettings):
         le=200,
         description="사이클당 요청 캔들 개수.",
         validation_alias="AUTOCOIN_CANDLE_COUNT",
+    )
+    candle_ref_timeframes: str = Field(
+        default="1h,4h",
+        description="참조 타임프레임 (쉼표 구분). 추세 확인용으로만 수집, 분석 체이닝 안 함.",
+        validation_alias="AUTOCOIN_CANDLE_REF_TIMEFRAMES",
     )
 
     log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")

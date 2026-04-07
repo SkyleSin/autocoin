@@ -68,12 +68,9 @@ async def check_alert(
 
     now = datetime.now(UTC)
 
-    # HOLD → 기존 알림 삭제
+    # HOLD → 기존 알림 유지 (일시적 HOLD로 인한 NEW 스팸 방지)
+    # 시그널이 반대 방향으로 바뀔 때만 CHANGED 처리
     if signal_type == "HOLD":
-        if existing:
-            await session.delete(existing)
-            logger.info("alert cleared: %s %s (was %s)", market, timeframe, existing.signal_type)
-            return AlertAction.CLEARED
         return AlertAction.SKIP
 
     # 기존 알림 없음 → 신규
@@ -90,13 +87,22 @@ async def check_alert(
         logger.info("alert new: %s %s %s", market, timeframe, signal_type)
         return AlertAction.NEW
 
-    # 시그널 변경 (BUY→SELL, SELL→BUY)
+    # 시그널 변경 (BUY→SELL, SELL→BUY) — 쿨다운 적용으로 진동 방지
     if existing.signal_type != signal_type:
+        elapsed = (now - existing.last_alerted_at).total_seconds()
         old_signal = existing.signal_type
         existing.signal_type = signal_type
         existing.confidence = confidence
         existing.reasons = json.dumps(reasons, ensure_ascii=False)
         existing.indicators = indicators
+        if elapsed < remind_interval_sec:
+            # 쿨다운 미도래 → 상태만 업데이트, 알림은 보류
+            logger.info(
+                "alert change suppressed: %s %s %s→%s (%.0fs < %.0fs cooldown)",
+                market, timeframe, old_signal, signal_type,
+                elapsed, remind_interval_sec,
+            )
+            return AlertAction.SKIP
         existing.last_alerted_at = now
         logger.info(
             "alert changed: %s %s %s→%s",

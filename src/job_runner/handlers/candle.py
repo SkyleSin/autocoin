@@ -102,14 +102,16 @@ async def handle_collect_candles(
     if session is not None:
         upserted = await _upsert_candles(session, raw, timeframe)
         job.response = {"upserted": upserted, "timeframe": timeframe}
-        # 수집 완료 → analyze_technical Job 자동 생성
-        analyze_job = Job(
-            type="analyze_technical",
-            status=JobStatus.Ready.value,
-            content={"market": market, "timeframe": timeframe},
-            priority=20,
-        )
-        session.add(analyze_job)
+        ref_only = bool(job.content.get("ref_only", False))
+        # 수집 완료 → analyze_technical Job 자동 생성 (참조 TF는 제외)
+        if not ref_only:
+            analyze_job = Job(
+                type="analyze_technical",
+                status=JobStatus.Ready.value,
+                content={"market": market, "timeframe": timeframe},
+                priority=20,
+            )
+            session.add(analyze_job)
     else:
         job.response = {"candles": raw, "timeframe": timeframe}
     job.status = JobStatus.Complete.value

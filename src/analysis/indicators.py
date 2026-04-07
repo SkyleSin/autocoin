@@ -15,6 +15,7 @@ class IndicatorSnapshot:
     macd: float | None
     macd_signal: float | None
     macd_histogram: float | None
+    macd_histogram_prev: float | None  # 직전 봉 히스토그램 (크로스 전환 감지용)
     bb_upper: float | None
     bb_middle: float | None
     bb_lower: float | None
@@ -22,6 +23,7 @@ class IndicatorSnapshot:
     sma_50: float | None
     ema_12: float | None
     ema_26: float | None
+    volume_ratio: float | None  # 현재 거래량 / 20봉 평균 거래량 (1.0 = 평균)
 
     def to_dict(self) -> dict[str, float | None]:
         return {
@@ -29,6 +31,7 @@ class IndicatorSnapshot:
             "macd": self.macd,
             "macd_signal": self.macd_signal,
             "macd_histogram": self.macd_histogram,
+            "macd_histogram_prev": self.macd_histogram_prev,
             "bb_upper": self.bb_upper,
             "bb_middle": self.bb_middle,
             "bb_lower": self.bb_lower,
@@ -36,6 +39,7 @@ class IndicatorSnapshot:
             "sma_50": self.sma_50,
             "ema_12": self.ema_12,
             "ema_26": self.ema_26,
+            "volume_ratio": self.volume_ratio,
         }
 
 
@@ -88,8 +92,10 @@ def bollinger_bands(
     return upper, middle, lower
 
 
-def compute_all(closes: pd.Series) -> IndicatorSnapshot | None:
-    """종가 시리즈로 모든 지표를 계산해 최신 값의 스냅샷 반환.
+def compute_all(
+    closes: pd.Series, volumes: pd.Series | None = None,
+) -> IndicatorSnapshot | None:
+    """종가(+거래량) 시리즈로 모든 지표를 계산해 최신 값의 스냅샷 반환.
 
     데이터가 부족하면 None.
     """
@@ -104,8 +110,16 @@ def compute_all(closes: pd.Series) -> IndicatorSnapshot | None:
     ema_12 = ema(closes, 12)
     ema_26 = ema(closes, 26)
 
-    def _last(s: pd.Series) -> float | None:
-        v = s.iloc[-1]
+    # 거래량 비율: 현재 거래량 / 20봉 평균
+    vol_ratio: float | None = None
+    if volumes is not None and len(volumes) >= 20:
+        avg_vol = float(sma(volumes, 20).iloc[-1])
+        cur_vol = float(volumes.iloc[-1])
+        if avg_vol > 0:
+            vol_ratio = round(cur_vol / avg_vol, 2)
+
+    def _last(s: pd.Series, offset: int = -1) -> float | None:
+        v = s.iloc[offset]
         if pd.isna(v):
             return None
         return round(float(v), 4)
@@ -115,6 +129,7 @@ def compute_all(closes: pd.Series) -> IndicatorSnapshot | None:
         macd=_last(macd_line),
         macd_signal=_last(signal_line),
         macd_histogram=_last(histogram),
+        macd_histogram_prev=_last(histogram, -2) if len(histogram) >= 2 else None,
         bb_upper=_last(bb_upper),
         bb_middle=_last(bb_middle),
         bb_lower=_last(bb_lower),
@@ -122,4 +137,5 @@ def compute_all(closes: pd.Series) -> IndicatorSnapshot | None:
         sma_50=_last(sma_50),
         ema_12=_last(ema_12),
         ema_26=_last(ema_26),
+        volume_ratio=vol_ratio,
     )

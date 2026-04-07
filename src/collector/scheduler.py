@@ -26,11 +26,18 @@ async def _active_markets(session: AsyncSession) -> list[str]:
     return [row[0] for row in result.all()]
 
 
+_LABEL_TO_UNIT = {
+    "1m": 1, "3m": 3, "5m": 5, "10m": 10,
+    "15m": 15, "30m": 30, "1h": 60, "4h": 240,
+}
+
+
 async def _create_candle_jobs(
     session: AsyncSession,
     markets: list[str],
     unit: int,
     count: int,
+    ref_only: bool = False,
 ) -> int:
     """각 마켓에 대해 collect_candles Job 생성. 생성 개수 반환."""
     created = 0
@@ -38,7 +45,10 @@ async def _create_candle_jobs(
         job = Job(
             type="collect_candles",
             status=JobStatus.Ready.value,
-            content={"market": market, "unit": unit, "count": count},
+            content={
+                "market": market, "unit": unit,
+                "count": count, "ref_only": ref_only,
+            },
             priority=10,
         )
         session.add(job)
@@ -82,6 +92,21 @@ async def candle_scheduler(
                             created,
                             len(markets),
                         )
+                        # 참조 타임프레임 수집 (추세 확인용, 분석 체이닝 안 함)
+                        ref_tf_str = settings.candle_ref_timeframes
+                        if ref_tf_str.strip():
+                            for tf_label in ref_tf_str.split(","):
+                                tf_label = tf_label.strip()
+                                ref_unit = _LABEL_TO_UNIT.get(tf_label)
+                                if ref_unit and ref_unit != unit:
+                                    ref_created = await _create_candle_jobs(
+                                        session, markets, ref_unit, count,
+                                        ref_only=True,
+                                    )
+                                    logger.info(
+                                        "candle_scheduler: created %d ref jobs (%s)",
+                                        ref_created, tf_label,
+                                    )
             except asyncio.CancelledError:
                 raise
             except Exception:

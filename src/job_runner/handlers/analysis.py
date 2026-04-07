@@ -15,8 +15,9 @@ from ai_engine.prompts import build_analysis_prompt
 from analysis.chart import generate_chart_from_db_candles
 from analysis.indicators import compute_all
 from analysis.patterns import analyze as analyze_patterns
-from analysis.signal_generator import evaluate
+from analysis.signal_generator import SignalResult, evaluate
 from analysis.support_resistance import analyze as analyze_sr
+from analysis.trend import get_higher_trend
 from models.active_alert import ActiveAlert
 from models.candle import Candle
 from models.job import Job
@@ -35,6 +36,7 @@ async def _run_technical_analysis(
     market: str,
     timeframe: str,
     candle_limit: int = 200,
+    ref_timeframes: list[str] | None = None,
 ) -> dict[str, Any]:
     """DB에서 캔들 로드 → 지표 계산 → Signal 저장 → 결과 반환."""
     result_rows = await session.execute(
@@ -55,8 +57,9 @@ async def _run_technical_analysis(
     highs = pd.Series([float(c.high) for c in candles])
     lows = pd.Series([float(c.low) for c in candles])
     closes = pd.Series([float(c.close) for c in candles])
+    volumes = pd.Series([float(c.volume) for c in candles])
 
-    snap = compute_all(closes)
+    snap = compute_all(closes, volumes)
     if snap is None:
         return {"status": "compute_failed", "candle_count": len(candles)}
 
@@ -73,6 +76,25 @@ async def _run_technical_analysis(
         "patterns": pat.to_dict(),
         "support_resistance": sr.to_dict(),
     }
+
+    # 상위 타임프레임 추세 확인 (BUY/SELL 시)
+    ref_tfs = ref_timeframes or []
+    if signal_result.signal_type in ("BUY", "SELL") and ref_tfs:
+        trend = await get_higher_trend(session, market, ref_tfs)
+        combined_indicators["higher_trend"] = {
+            "direction": trend.direction,
+            "timeframe": trend.timeframe,
+            "sma_20": trend.sma_20,
+            "sma_50": trend.sma_50,
+            "description": trend.description,
+        }
+        # 상위 추세 하락 중 매수 → HOLD로 전환
+        if signal_result.signal_type == "BUY" and trend.direction == "DOWN":
+            signal_result = SignalResult(
+                "HOLD", 0.0,
+                signal_result.reasons
+                + [f"⚠️ 상위 추세 하락 ({trend.description}) — 매수 보류"],
+            )
 
     signal = Signal(
         market=market,
@@ -97,6 +119,7 @@ async def _run_technical_analysis(
                 "indicators": combined_indicators,
                 "technical_signal": signal_result.signal_type,
                 "technical_reasons": signal_result.reasons,
+                "candle_count": len(candles),
             },
             priority=15,
         )
@@ -124,7 +147,13 @@ async def handle_analyze_technical(
         raise ValueError("analyze_technical 잡에 content.market 이 필요합니다.")
     market = str(job.content["market"]).strip()
     timeframe = str(job.content.get("timeframe", "1m"))
-    result = await _run_technical_analysis(session, market, timeframe)
+    ref_timeframes: list[str] = []
+    ref_tf_str = settings.candle_ref_timeframes
+    if ref_tf_str.strip():
+        ref_timeframes = [tf.strip() for tf in ref_tf_str.split(",") if tf.strip()]
+    result = await _run_technical_analysis(
+        session, market, timeframe, ref_timeframes=ref_timeframes,
+    )
     job.response = result
     job.status = JobStatus.Complete.value
 
@@ -144,8 +173,11 @@ async def handle_analyze_local_llm(
     tech_signal = str(job.content["technical_signal"])
     tech_reasons = list(job.content.get("technical_reasons", []))
 
+    candle_count = int(job.content.get("candle_count", 0))
+
     prompt = build_analysis_prompt(
         market, close_price, indicators, tech_signal, tech_reasons,
+        timeframe=timeframe, candle_count=candle_count,
     )
     llm_result = await query_ollama(
         prompt,
