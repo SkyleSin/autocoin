@@ -12,7 +12,7 @@ from pathlib import Path
 import pandas as pd
 
 # src를 import path에 추가
-sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
 from analysis.indicators import compute_all, sma  # noqa: E402
 from analysis.patterns import analyze as analyze_patterns  # noqa: E402

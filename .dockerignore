@@ -10,3 +10,8 @@ dist
 build
 .env
 .cursor
+.claude
+log
+scripts
+docs
+backtest_charts

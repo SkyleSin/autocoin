@@ -13,7 +13,7 @@ import matplotlib.dates as mdates
 import mplfinance as mpf
 import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
 from analysis.indicators import compute_all  # noqa: E402
 from analysis.patterns import analyze as analyze_patterns  # noqa: E402
@@ -31,7 +31,7 @@ EVAL_BARS = 16
 WEEKS = 4
 TARGET_PATTERNS = {"double_top", "double_bottom", "falling_wedge"}
 TARGET_NAMES = {"double_top": "쌍봉", "double_bottom": "쌍바닥", "falling_wedge": "하락쐐기형"}
-OUT_DIR = Path("backtest_charts")
+OUT_DIR = Path(__file__).resolve().parent / "charts"
 
 
 def fetch_candles(client, market, unit, total):
