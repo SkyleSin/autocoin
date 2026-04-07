@@ -109,7 +109,7 @@ class Settings(BaseSettings):
     # 런타임 설정 기본값 (DB에 저장된 값이 있으면 서버 시작 시 덮어씀)
     alert_remind_interval_sec: float = 14400.0  # 4시간 (재알림 + CHANGED 쿨다운)
     risk_max_per_trade_pct: float = 15.0
-    risk_max_daily_trades: int = 10
+    risk_max_daily_trades: int = 30
     risk_min_krw_reserve: float = 100_000.0
 
     # 긴급 매도 안전장치

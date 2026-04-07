@@ -237,17 +237,35 @@ async def _send_startup_alert(
                 select(Signal).order_by(Signal.created_at.desc()).limit(1)
             )).scalar_one_or_none()
 
+        # LLM 모델 표시
+        main_llm = (
+            f"`{settings.deepseek_model}`"
+            if settings.deepseek_api_key
+            else f"`{settings.ollama_model}`"
+        )
+        sub_llm = (
+            f"`{settings.ollama_model}`"
+            if settings.deepseek_api_key
+            else "없음"
+        )
+
         msg = f"""🚀 *autocoin 서버 시작*
 
 📋 *추적 자산:* {asset_list}
-⏱️ *캔들 수집 주기:* {settings.candle_interval_sec:.0f}초
-🤖 *LLM 모델:* `{settings.ollama_model}`
+⏱️ *캔들 분석 주기:* {settings.candle_interval_sec:.0f}초
+🛡️ *안전장치 감시:* {settings.safety_monitor_interval_sec:.0f}초 간격
+🤖 *Main LLM:* {main_llm}
+🔄 *Sub LLM (폴백):* {sub_llm}
 👷 *워커:* {settings.job_worker_count}개
 
 ⚙️ *리스크 설정:*
 • 1회 매매 상한: 잔고의 `{settings.risk_max_per_trade_pct}%`
 • 일일 매매 횟수: `{settings.risk_max_daily_trades}회`
-• 최소 유지 잔고: `{settings.risk_min_krw_reserve:,.0f}원`"""
+• 최소 유지 잔고: `{settings.risk_min_krw_reserve:,.0f}원`
+
+🛡️ *안전장치:*
+• 즉시 트리거: 지지선 `{settings.safety_breach_immediate_pct}%+` 이탈
+• 연속 트리거: `{settings.safety_breach_consecutive_pct}%+` × `{settings.safety_breach_consecutive_count}분`"""
 
         if last_signal:
             msg += (
