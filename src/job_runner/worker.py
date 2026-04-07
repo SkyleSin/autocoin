@@ -16,7 +16,12 @@ from job_runner.handlers.bithumb import (
     handle_bithumb_ticker,
 )
 from job_runner.handlers.candle import handle_collect_candles
-from job_runner.handlers.trade import handle_check_balance, handle_check_order, handle_place_order
+from job_runner.handlers.trade import (
+    handle_cancel_order,
+    handle_check_balance,
+    handle_check_order,
+    handle_place_order,
+)
 from job_runner.poller import JobQueueItem, is_shutdown_queue_item
 from job_runner.rate_limit import AsyncSlidingWindowRateLimiter
 from job_runner.workers import CoinServerAPIError
@@ -74,9 +79,11 @@ async def _execute_job(
     elif job.type == "check_balance":
         await handle_check_balance(job, settings, rate_limiter=rl, session=session)
     elif job.type == "place_order":
-        await handle_place_order(job, settings, rate_limiter=rl)
+        await handle_place_order(job, settings, rate_limiter=rl, session=session)
     elif job.type == "check_order":
-        await handle_check_order(job, settings, rate_limiter=rl)
+        await handle_check_order(job, settings, rate_limiter=rl, session=session)
+    elif job.type == "cancel_order":
+        await handle_cancel_order(job, settings, rate_limiter=rl, session=session)
     else:
         raise ValueError(f"지원하지 않는 job type: {job.type}")
 

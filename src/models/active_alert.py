@@ -46,3 +46,7 @@ class ActiveAlert(Base):
         Text, nullable=True, default=None,
         comment="패스 당시 reasons (JSON). 패턴 변경 감지에 사용",
     )
+    acted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None,
+        comment="매매 실행 시각 (NULL이면 미실행). 동일 시그널 재알림 방지.",
+    )

@@ -36,6 +36,19 @@ async def send_message(
             if resp.is_success:
                 logger.info("telegram: 메시지 전송 성공 (chat_id=%s)", chat_id)
                 return True
+            # Markdown 파싱 실패 시 플레인 텍스트로 재시도
+            if resp.status_code == 400 and "parse entities" in resp.text:
+                logger.warning("telegram: Markdown 파싱 실패, 플레인 텍스트로 재시도")
+                payload.pop("parse_mode", None)
+                resp2 = await client.post(url, json=payload)
+                if resp2.is_success:
+                    logger.info("telegram: 플레인 텍스트 재전송 성공 (chat_id=%s)", chat_id)
+                    return True
+                logger.warning(
+                    "telegram: 플레인 재전송도 실패 status=%s body=%s",
+                    resp2.status_code, resp2.text[:200],
+                )
+                return False
             logger.warning(
                 "telegram: 전송 실패 status=%s body=%s",
                 resp.status_code,
@@ -72,6 +85,20 @@ async def send_photo(
             if resp.is_success:
                 logger.info("telegram: 이미지 전송 성공 (chat_id=%s)", chat_id)
                 return True
+            # Markdown 파싱 실패 시 플레인 텍스트로 재시도
+            if resp.status_code == 400 and "parse entities" in resp.text:
+                logger.warning("telegram: 이미지 캡션 Markdown 파싱 실패, 플레인 텍스트로 재시도")
+                data.pop("parse_mode", None)
+                files_retry = {"photo": (filename, image_bytes, "image/png")}
+                resp2 = await client.post(url, data=data, files=files_retry)
+                if resp2.is_success:
+                    logger.info("telegram: 이미지 플레인 재전송 성공 (chat_id=%s)", chat_id)
+                    return True
+                logger.warning(
+                    "telegram: 이미지 플레인 재전송도 실패 status=%s body=%s",
+                    resp2.status_code, resp2.text[:200],
+                )
+                return False
             logger.warning(
                 "telegram: 이미지 전송 실패 status=%s body=%s",
                 resp.status_code,

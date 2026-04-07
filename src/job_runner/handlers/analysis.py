@@ -10,7 +10,6 @@ import pandas as pd
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ai_engine.local_llm import query_ollama
 from ai_engine.prompts import build_analysis_prompt
 from analysis.chart import generate_chart_from_db_candles
 from analysis.indicators import compute_all
@@ -23,7 +22,7 @@ from models.candle import Candle
 from models.job import Job
 from models.job_status import JobStatus
 from models.signal import Signal
-from services.alert_service import AlertAction, check_alert
+from services.alert_service import AlertAction, check_alert, check_alert_preview
 from telegram.bot import send_signal_alert
 from telegram.messages import format_combined_alert
 from utils.config import Settings
@@ -106,25 +105,37 @@ async def _run_technical_analysis(
     )
     session.add(signal)
 
-    # BUY/SELL 시그널 → analyze_local_llm Job 자동 생성
+    # BUY/SELL 시그널 → 알림 가능 여부 먼저 확인 후 LLM Job 생성
     chain_created = False
     if signal_result.signal_type in ("BUY", "SELL"):
-        llm_job = Job(
-            type="analyze_local_llm",
-            status=JobStatus.Ready.value,
-            content={
-                "market": market,
-                "timeframe": timeframe,
-                "close_price": close_price,
-                "indicators": combined_indicators,
-                "technical_signal": signal_result.signal_type,
-                "technical_reasons": signal_result.reasons,
-                "candle_count": len(candles),
-            },
-            priority=15,
+        from services.alert_service import AlertAction, check_alert_preview
+
+        action = await check_alert_preview(
+            session, market, timeframe,
+            signal_type=signal_result.signal_type,
         )
-        session.add(llm_job)
-        chain_created = True
+        if action in (AlertAction.SKIP, AlertAction.PASSED):
+            logger.info(
+                "LLM 호출 생략 (alert %s): %s %s %s",
+                action, market, timeframe, signal_result.signal_type,
+            )
+        else:
+            llm_job = Job(
+                type="analyze_local_llm",
+                status=JobStatus.Ready.value,
+                content={
+                    "market": market,
+                    "timeframe": timeframe,
+                    "close_price": close_price,
+                    "indicators": combined_indicators,
+                    "technical_signal": signal_result.signal_type,
+                    "technical_reasons": signal_result.reasons,
+                    "candle_count": len(candles),
+                },
+                priority=15,
+            )
+            session.add(llm_job)
+            chain_created = True
 
     return {
         "status": "ok",
@@ -179,19 +190,43 @@ async def handle_analyze_local_llm(
         market, close_price, indicators, tech_signal, tech_reasons,
         timeframe=timeframe, candle_count=candle_count,
     )
-    llm_result = await query_ollama(
-        prompt,
-        base_url=settings.ollama_base_url,
-        model=settings.ollama_model,
-        timeout=settings.ollama_timeout,
-        num_gpu=settings.ollama_num_gpu,
-    )
+
+    llm_result = None
+    llm_source = "local_llm"
+
+    # DeepSeek 우선 시도 → 실패 시 Ollama 폴백
+    if settings.deepseek_api_key:
+        try:
+            from ai_engine.deepseek_llm import query_deepseek
+
+            llm_result = await query_deepseek(
+                prompt,
+                api_key=settings.deepseek_api_key,
+                base_url=settings.deepseek_base_url,
+                model=settings.deepseek_model,
+                timeout=settings.deepseek_timeout,
+            )
+            llm_source = "deepseek"
+        except Exception:
+            logger.warning("DeepSeek API 실패, Ollama 폴백", exc_info=True)
+
+    if llm_result is None:
+        from ai_engine.local_llm import query_ollama
+
+        llm_result = await query_ollama(
+            prompt,
+            base_url=settings.ollama_base_url,
+            model=settings.ollama_model,
+            timeout=settings.ollama_timeout,
+            num_gpu=settings.ollama_num_gpu,
+        )
 
     enriched_indicators = {
         **(indicators or {}),
         "llm_reason": llm_result.reason,
         "tech_reasons": tech_reasons,
         "llm_raw_response": llm_result.raw_response[:1000],
+        "llm_source": llm_source,
     }
 
     signal = Signal(
@@ -200,7 +235,7 @@ async def handle_analyze_local_llm(
         signal_type=llm_result.decision,
         confidence=llm_result.confidence,
         indicators=enriched_indicators,
-        source="local_llm",
+        source=llm_source,
     )
     session.add(signal)
 

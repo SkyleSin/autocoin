@@ -87,9 +87,28 @@ class Settings(BaseSettings):
         validation_alias="OLLAMA_TIMEOUT",
     )
 
+    deepseek_api_key: str = Field(
+        default="",
+        validation_alias="DEEPSEEK_API_KEY",
+    )
+    deepseek_base_url: str = Field(
+        default="https://api.deepseek.com",
+        validation_alias="DEEPSEEK_BASE_URL",
+    )
+    deepseek_model: str = Field(
+        default="deepseek-reasoner",
+        description="deepseek-chat (V3) 또는 deepseek-reasoner (R1)",
+        validation_alias="DEEPSEEK_MODEL",
+    )
+    deepseek_timeout: float = Field(
+        default=120.0,
+        description="DeepSeek 응답 타임아웃(초). R1은 추론 시간이 길어 넉넉하게.",
+        validation_alias="DEEPSEEK_TIMEOUT",
+    )
+
     # 런타임 설정 기본값 (DB에 저장된 값이 있으면 서버 시작 시 덮어씀)
     alert_remind_interval_sec: float = 14400.0  # 4시간 (재알림 + CHANGED 쿨다운)
-    risk_max_per_trade_pct: float = 5.0
+    risk_max_per_trade_pct: float = 15.0
     risk_max_daily_trades: int = 10
     risk_min_krw_reserve: float = 100_000.0
 

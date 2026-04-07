@@ -43,6 +43,55 @@ async def mark_passed(
     return True
 
 
+async def check_alert_preview(
+    session: AsyncSession,
+    market: str,
+    timeframe: str,
+    *,
+    signal_type: str,
+) -> str:
+    """LLM 호출 전 알림 가능 여부만 간단 확인 (DB 변경 없음).
+
+    Returns:
+        AlertAction 상수 (SKIP, PASSED, 또는 NEW/CHANGED/REMIND 중 하나)
+    """
+    if signal_type == "HOLD":
+        return AlertAction.SKIP
+
+    existing = (await session.execute(
+        select(ActiveAlert).where(
+            ActiveAlert.market == market,
+            ActiveAlert.timeframe == timeframe,
+        )
+    )).scalar_one_or_none()
+
+    if existing is None:
+        return AlertAction.NEW
+
+    # 매매 실행 완료 + 동일 시그널 → SKIP
+    if existing.acted_at is not None and existing.signal_type == signal_type:
+        return AlertAction.SKIP
+
+    # 시그널 변경 → 쿨다운 확인
+    now = datetime.now(UTC)
+    if existing.signal_type != signal_type:
+        elapsed = (now - existing.last_alerted_at).total_seconds()
+        if elapsed < 600.0:  # 기본 쿨다운 (실제 check_alert에서 정확히 판단)
+            return AlertAction.SKIP
+        return AlertAction.CHANGED
+
+    # 동일 시그널 + 패스 상태
+    if existing.passed_at is not None:
+        return AlertAction.PASSED
+
+    # 재알림 시간 확인
+    elapsed = (now - existing.last_alerted_at).total_seconds()
+    if elapsed >= 600.0:  # 보수적 추정, 실제는 remind_interval_sec
+        return AlertAction.REMIND
+
+    return AlertAction.SKIP
+
+
 async def check_alert(
     session: AsyncSession,
     market: str,
@@ -86,6 +135,17 @@ async def check_alert(
         ))
         logger.info("alert new: %s %s %s", market, timeframe, signal_type)
         return AlertAction.NEW
+
+    # 매매 실행 완료 → 동일 시그널이면 무시, 반대 시그널이면 해제 후 진행
+    if existing.acted_at is not None:
+        if existing.signal_type == signal_type:
+            return AlertAction.SKIP
+        # 반대 시그널 → acted_at 해제하고 CHANGED 흐름으로
+        existing.acted_at = None
+        logger.info(
+            "alert acted cleared (signal reversed): %s %s %s→%s",
+            market, timeframe, existing.signal_type, signal_type,
+        )
 
     # 시그널 변경 (BUY→SELL, SELL→BUY) — 쿨다운 적용으로 진동 방지
     if existing.signal_type != signal_type:

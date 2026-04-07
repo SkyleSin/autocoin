@@ -485,8 +485,10 @@ async def _handle_callback(
                 f"리스크 검증 후 주문을 진행합니다.",
             )
 
-            # ActiveAlert 삭제 (실행했으니 알림 불필요)
+            # ActiveAlert에 acted_at 마킹 (동일 시그널 재알림 방지)
             async with sf() as session:
+                from datetime import UTC, datetime
+
                 from models.active_alert import ActiveAlert
                 from models.job import Job
                 from models.job_status import JobStatus
@@ -494,8 +496,9 @@ async def _handle_callback(
                 existing_alerts = (await session.execute(
                     select(ActiveAlert).where(ActiveAlert.market == market)
                 )).scalars().all()
+                now = datetime.now(UTC)
                 for alert in existing_alerts:
-                    await session.delete(alert)
+                    alert.acted_at = now
 
                 job = Job(
                     type="check_balance",
@@ -542,8 +545,10 @@ async def _handle_callback(
                 f"{holding_info}",
             )
 
-            # ActiveAlert 삭제
+            # ActiveAlert에 acted_at 마킹 (동일 시그널 재알림 방지)
             async with sf() as session:
+                from datetime import UTC, datetime
+
                 from models.active_alert import ActiveAlert
                 from models.job import Job
                 from models.job_status import JobStatus
@@ -551,8 +556,9 @@ async def _handle_callback(
                 existing_alerts = (await session.execute(
                     select(ActiveAlert).where(ActiveAlert.market == market)
                 )).scalars().all()
+                now = datetime.now(UTC)
                 for alert in existing_alerts:
-                    await session.delete(alert)
+                    alert.acted_at = now
 
                 job = Job(
                     type="check_balance",
@@ -568,6 +574,120 @@ async def _handle_callback(
                 )
                 session.add(job)
                 await session.commit()
+    elif data.startswith("rebalance:"):
+        # rebalance:{sell_market}:{buy_market}:{buy_price}:{sell_pct}
+        parts = data.split(":")
+        if len(parts) >= 5:
+            sell_market = parts[1]
+            buy_market = parts[2]
+            buy_price = float(parts[3])
+            sell_pct = int(parts[4])
+
+            await send_message(
+                token, chat_id,
+                f"🔄 리밸런싱 실행 중...\n"
+                f"1단계: `{sell_market}` {sell_pct}% 매도\n"
+                f"2단계: `{buy_market}` 매수 예정",
+            )
+
+            async with sf() as session:
+                from datetime import UTC, datetime
+
+                from models.active_alert import ActiveAlert
+                from models.job import Job
+                from models.job_status import JobStatus
+
+                # 양쪽 ActiveAlert 처리
+                now = datetime.now(UTC)
+                for mkt in (sell_market, buy_market):
+                    alerts = (await session.execute(
+                        select(ActiveAlert).where(ActiveAlert.market == mkt)
+                    )).scalars().all()
+                    for alert in alerts:
+                        alert.acted_at = now
+
+                # 매도 Job 생성 (완료 후 매수 체이닝)
+                job = Job(
+                    type="check_balance",
+                    status=JobStatus.Ready.value,
+                    content={
+                        "trigger": "rebalance",
+                        "market": sell_market,
+                        "side": "SELL",
+                        "sell_pct": sell_pct,
+                        "price": buy_price,
+                        "rebalance_buy_market": buy_market,
+                        "rebalance_buy_price": buy_price,
+                    },
+                    priority=5,
+                )
+                session.add(job)
+                await session.commit()
+    elif data.startswith("order_retry:"):
+        # order_retry:{order_uuid}:{market}:{side}
+        parts = data.split(":")
+        if len(parts) >= 4:
+            order_uuid = parts[1]
+            market = parts[2]
+            side = parts[3]
+            side_ko = "매수" if side == "bid" else "매도"
+
+            await send_message(
+                token, chat_id,
+                f"🔄 `{market}` 기존 주문 취소 후 시장가 재주문 중...",
+            )
+
+            async with sf() as session:
+                from models.job import Job
+                from models.job_status import JobStatus
+
+                # 1) 기존 주문 취소 Job
+                cancel_job = Job(
+                    type="cancel_order",
+                    status=JobStatus.Ready.value,
+                    content={
+                        "uuid": order_uuid,
+                        "market": market,
+                        "side": side,
+                        "reorder": True,
+                    },
+                    priority=1,
+                )
+                session.add(cancel_job)
+                await session.commit()
+    elif data.startswith("order_cancel:"):
+        # order_cancel:{order_uuid}:{market}
+        parts = data.split(":")
+        if len(parts) >= 3:
+            order_uuid = parts[1]
+            market = parts[2]
+
+            await send_message(token, chat_id, f"❌ `{market}` 주문 취소 중...")
+
+            async with sf() as session:
+                from models.job import Job
+                from models.job_status import JobStatus
+
+                cancel_job = Job(
+                    type="cancel_order",
+                    status=JobStatus.Ready.value,
+                    content={
+                        "uuid": order_uuid,
+                        "market": market,
+                        "reorder": False,
+                    },
+                    priority=1,
+                )
+                session.add(cancel_job)
+                await session.commit()
+    elif data.startswith("order_keep:"):
+        parts = data.split(":")
+        if len(parts) >= 2:
+            order_uuid = parts[1]
+            await send_message(
+                token, chat_id,
+                f"⏭️ 주문 유지합니다.\n주문 ID: `{order_uuid}`",
+            )
     elif data.startswith("trade_pass"):
         # trade_pass:{market} 또는 레거시 trade_pass
         parts = data.split(":")

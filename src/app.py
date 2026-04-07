@@ -74,6 +74,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 await conn.run_sync(
                     lambda sync_conn, t=table: t.create(sync_conn, checkfirst=True),
                 )
+            # active_alerts에 acted_at 컬럼 추가 (기존 테이블 마이그레이션)
+            await conn.execute(text("""
+                ALTER TABLE active_alerts
+                ADD COLUMN IF NOT EXISTS acted_at TIMESTAMPTZ DEFAULT NULL
+            """))
             # 이전 프로세스에서 Queue 상태로 남은 잡 → Ready로 복구
             await conn.execute(
                 text("UPDATE jobs SET status = :ready WHERE status = :queue"),

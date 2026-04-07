@@ -45,8 +45,7 @@ SELL_PATTERN_RECOMMENDATION: dict[str, int] = {
 SELL_DEFAULT_RECOMMENDATION = 40  # 패턴 없을 때 기본 추천
 
 # 자동 조절 기준
-MAX_ALLOCATION_PCT = 50.0   # 절대 상한 (매수용)
-MIN_ALLOCATION_PCT = 5.0    # 절대 하한 (매수용)
+MIN_ALLOCATION_PCT = 3.0    # 절대 하한 (매수용)
 
 
 @dataclass(frozen=True)
@@ -65,25 +64,28 @@ def calculate_position(
     patterns: list[dict[str, Any]] | None = None,
     confidence: float = 0.5,
     indicators: dict[str, Any] | None = None,
+    max_per_trade_pct: float = 15.0,
 ) -> PositionSize:
     """패턴 + 시장 상황 기반 포지션 사이징.
 
-    1. 패턴별 기본 비율 결정
-    2. 리스크 조건으로 자동 조절 (과한 금액 방지)
+    max_per_trade_pct 내에서 패턴/confidence/지표로 비율 결정.
     """
     adjustments: list[str] = []
 
-    # 1) 패턴별 기본 비율
-    base_pct = DEFAULT_ALLOCATION_PCT
+    # 1) 패턴별 기본 비율 → max_per_trade_pct 대비 비율로 스케일
     pattern_name = "없음"
+    pattern_weight = 0.5  # 패턴 없으면 상한의 50%
 
     if patterns:
-        # 가장 신뢰도 높은 패턴 기준
         top = patterns[0]
         name = top.get("name", "")
         pattern_name = top.get("name_ko", name)
-        base_pct = PATTERN_ALLOCATION.get(name, DEFAULT_ALLOCATION_PCT)
-        adjustments.append(f"패턴 {pattern_name} 기본 {base_pct}%")
+        raw_pct = PATTERN_ALLOCATION.get(name, DEFAULT_ALLOCATION_PCT)
+        # 패턴 기본 비율(10~35%)을 0.3~1.0 가중치로 변환
+        pattern_weight = max(0.3, min(raw_pct / 35.0, 1.0))
+        adjustments.append(f"패턴 {pattern_name} 가중치 {pattern_weight:.0%}")
+
+    base_pct = max_per_trade_pct * pattern_weight
 
     # 2) confidence 스케일링 (0.5~1.0 → 50~100%)
     conf_scale = max(0.5, min(confidence, 1.0))
@@ -96,15 +98,12 @@ def calculate_position(
         rsi = indicators.get("rsi_14")
         if rsi is not None:
             if rsi < 20:
-                # 극단적 과매도 → 비율 상향 (바닥 매수 기회)
                 adjusted_pct *= 1.2
                 adjustments.append(f"RSI {rsi:.0f} 극과매도 +20%")
             elif rsi > 80:
-                # 극단적 과매수 → 비율 하향 (위험)
                 adjusted_pct *= 0.6
                 adjustments.append(f"RSI {rsi:.0f} 극과매수 -40%")
             elif 60 < rsi < 70:
-                # 과매수 접근 → 소폭 하향
                 adjusted_pct *= 0.8
                 adjustments.append(f"RSI {rsi:.0f} 과매수 접근 -20%")
 
@@ -116,26 +115,19 @@ def calculate_position(
         if bb_upper and bb_lower and bb_middle:
             bb_width = (bb_upper - bb_lower) / bb_middle * 100
             if bb_width < 1.0:
-                # 밴드 수축 → 큰 변동 예고, 비율 하향 (방향 불확실)
                 adjusted_pct *= 0.7
                 adjustments.append(f"볼린저 수축 ({bb_width:.1f}%) -30%")
 
-    # 5) 상한/하한 클램핑
-    if adjusted_pct > MAX_ALLOCATION_PCT:
-        adjustments.append(f"상한 적용 {adjusted_pct:.1f}% → {MAX_ALLOCATION_PCT}%")
-        adjusted_pct = MAX_ALLOCATION_PCT
+    # 5) 상한/하한 클램핑 (risk_max_per_trade_pct가 절대 상한)
+    if adjusted_pct > max_per_trade_pct:
+        adjustments.append(f"상한 적용 {adjusted_pct:.1f}% → {max_per_trade_pct}%")
+        adjusted_pct = max_per_trade_pct
     if adjusted_pct < MIN_ALLOCATION_PCT:
         adjustments.append(f"하한 적용 {adjusted_pct:.1f}% → {MIN_ALLOCATION_PCT}%")
         adjusted_pct = MIN_ALLOCATION_PCT
 
     # 6) 금액 계산
     amount = krw_balance * (adjusted_pct / 100)
-
-    # 7) 잔고 대비 현실성 체크 — 잔고가 부족하면 최대 가용액
-    if amount > krw_balance * 0.95:
-        amount = krw_balance * 0.95
-        adjusted_pct = amount / krw_balance * 100
-        adjustments.append("잔고 95% 상한 적용")
 
     return PositionSize(
         allocation_pct=round(adjusted_pct, 1),
