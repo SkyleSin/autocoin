@@ -312,6 +312,7 @@ async def handle_analyze_local_llm(
         llm_confidence=llm_result.confidence,
         llm_reason=llm_result.reason,
         indicators=indicators,
+        llm_source=llm_source,
     )
 
     chart_image: bytes | None = None

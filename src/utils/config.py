@@ -112,6 +112,34 @@ class Settings(BaseSettings):
     risk_max_daily_trades: int = 10
     risk_min_krw_reserve: float = 100_000.0
 
+    # 긴급 매도 안전장치
+    safety_monitor_interval_sec: float = Field(
+        default=60.0,
+        description="안전장치 감시 주기(초).",
+        validation_alias="AUTOCOIN_SAFETY_INTERVAL_SEC",
+    )
+    safety_breach_immediate_pct: float = Field(
+        default=5.0,
+        description="즉시 LLM 트리거 임계값 (지지선 대비 이탈 %).",
+        validation_alias="AUTOCOIN_SAFETY_BREACH_IMMEDIATE_PCT",
+    )
+    safety_breach_consecutive_pct: float = Field(
+        default=1.5,
+        description="연속 감시 임계값 (지지선 대비 이탈 %).",
+        validation_alias="AUTOCOIN_SAFETY_BREACH_CONSECUTIVE_PCT",
+    )
+    safety_breach_consecutive_count: int = Field(
+        default=5,
+        ge=1,
+        description="연속 이탈 횟수 (이 횟수 도달 시 LLM 트리거).",
+        validation_alias="AUTOCOIN_SAFETY_BREACH_CONSECUTIVE_COUNT",
+    )
+    safety_cooldown_sec: float = Field(
+        default=300.0,
+        description="긴급 판단 후 동일 마켓 쿨다운(초).",
+        validation_alias="AUTOCOIN_SAFETY_COOLDOWN_SEC",
+    )
+
     candle_interval_sec: float = Field(
         default=60.0,
         description="캔들 수집 주기(초). 1분봉 기준 60.",

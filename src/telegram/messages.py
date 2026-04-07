@@ -90,6 +90,15 @@ def format_llm_signal(
 {reason}"""
 
 
+def _llm_source_label(source: str) -> str:
+    """LLM 소스 표시용 라벨."""
+    labels = {
+        "deepseek": "DeepSeek R1",
+        "local_llm": "Ollama",
+    }
+    return labels.get(source, source)
+
+
 def format_combined_alert(
     market: str,
     close_price: float,
@@ -100,11 +109,15 @@ def format_combined_alert(
     llm_confidence: float,
     llm_reason: str,
     indicators: dict[str, Any] | None = None,
+    *,
+    llm_source: str = "",
 ) -> str:
     """기술분석 + LLM 종합 알림 메시지."""
     tech_emoji = _signal_emoji(tech_signal)
     llm_emoji = _signal_emoji(llm_decision)
     reasons_text = "\n".join(f"  • {r}" for r in tech_reasons)
+
+    source_label = f" [{_llm_source_label(llm_source)}]" if llm_source else ""
 
     msg = f"""🚨 *매매 시그널 발생*
 
@@ -114,7 +127,7 @@ def format_combined_alert(
 *1차 기술분석:* {tech_emoji} {tech_signal} ({tech_confidence:.0%})
 {reasons_text}
 
-*2차 AI 판단:* {llm_emoji} {llm_decision} ({llm_confidence:.0%})
+*2차 AI 판단{source_label}:* {llm_emoji} {llm_decision} ({llm_confidence:.0%})
 {llm_reason}"""
 
     # 패턴/SR 정보 추가

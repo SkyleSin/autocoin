@@ -138,12 +138,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             name="report-scheduler",
         )
 
+        from safety.monitor import safety_monitor
+        safety_monitor_task = asyncio.create_task(
+            safety_monitor(session_factory, settings),
+            name="safety-monitor",
+        )
+
         app.state.job_queue = job_queue
         app.state.job_poller_task = poller_task
         app.state.job_worker_tasks = worker_tasks
         app.state.candle_scheduler_task = candle_scheduler_task
         app.state.telegram_poller_task = telegram_poller_task
         app.state.report_scheduler_task = report_scheduler_task
+        app.state.safety_monitor_task = safety_monitor_task
         logger.info(
             "job runner: poller=1 workers=%s bithumb_max_rps=%s "
             "candle_interval=%.0fs telegram=%s",
@@ -160,6 +167,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await _send_startup_alert(session_factory, settings)
 
         yield
+
+        logger.info("lifespan: stop safety_monitor")
+        safety_monitor_task.cancel()
+        await asyncio.gather(safety_monitor_task, return_exceptions=True)
 
         logger.info("lifespan: stop report_scheduler")
         report_scheduler_task.cancel()
