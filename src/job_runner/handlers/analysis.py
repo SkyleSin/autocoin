@@ -94,6 +94,15 @@ async def _run_technical_analysis(
                 signal_result.reasons
                 + [f"⚠️ 상위 추세 하락 ({trend.description}) — 매수 보류"],
             )
+        # 상위 추세 상승 중 매도 → 신뢰도 50% 감쇠
+        elif signal_result.signal_type == "SELL" and trend.direction == "UP":
+            orig = signal_result.confidence
+            dampened = round(orig * 0.5, 2)
+            signal_result = SignalResult(
+                "SELL", dampened,
+                signal_result.reasons
+                + [f"⚠️ 상위 추세 상승 ({trend.description}) — 매도 신뢰도 감쇠 {orig}→{dampened}"],
+            )
 
     signal = Signal(
         market=market,
@@ -108,8 +117,6 @@ async def _run_technical_analysis(
     # BUY/SELL 시그널 → 알림 가능 여부 먼저 확인 후 LLM Job 생성
     chain_created = False
     if signal_result.signal_type in ("BUY", "SELL"):
-        from services.alert_service import AlertAction, check_alert_preview
-
         action = await check_alert_preview(
             session, market, timeframe,
             signal_type=signal_result.signal_type,

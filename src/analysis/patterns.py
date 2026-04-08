@@ -12,6 +12,19 @@ from dataclasses import dataclass
 
 import pandas as pd
 
+# ── 활성 패턴 화이트리스트 (백테스트 적중률 50%+ 기반) ──
+_ACTIVE_PATTERNS: set[str] = {
+    "double_top",           # 쌍봉 67%
+    "triple_top",           # 삼중천정 50%+
+    "triple_bottom",        # 트리플바닥 55%+
+    "head_and_shoulders",   # 머리어깨 56%
+    "falling_wedge",        # 하락쐐기 70%
+    "bull_flag",            # 상승깃발 58%
+    "bear_flag",            # 하락깃발 80%
+    "box_range",            # 박스권 (HOLD, 정보용)
+    "symmetric_triangle",   # 대칭삼각형 (HOLD, 정보용)
+}
+
 # ── 데이터 클래스 ──
 
 
@@ -45,6 +58,7 @@ class PatternMatch:
     signal: str      # "BUY" | "SELL" | "HOLD"
     confidence: int  # 50~100
     description: str
+    active: bool = True  # 백테스트 적중률 50%+ 기반 활성 여부
 
 
 @dataclass(frozen=True)
@@ -64,6 +78,7 @@ class PatternAnalysis:
                     "signal": p.signal,
                     "confidence": p.confidence,
                     "description": p.description,
+                    "active": p.active,
                 }
                 for p in self.patterns
             ],
@@ -474,10 +489,13 @@ def _detect_bear_flag(
 
 
 def _filter_conflicting(patterns: list[PatternMatch]) -> list[PatternMatch]:
-    """BUY/SELL 동시 → 둘 다 제거 (횡보/불확실)."""
-    signals = {p.signal for p in patterns}
-    if "BUY" in signals and "SELL" in signals:
-        return [p for p in patterns if p.signal == "HOLD"]
+    """활성 패턴 BUY/SELL 동시 → 활성 BUY/SELL 제거, 비활성은 유지."""
+    active_signals = {p.signal for p in patterns if p.active}
+    if "BUY" in active_signals and "SELL" in active_signals:
+        return [
+            p for p in patterns
+            if not p.active or p.signal == "HOLD"
+        ]
     return patterns
 
 
@@ -548,14 +566,22 @@ def analyze(
     if bear:
         patterns.append(bear)
 
-    # 상충 패턴 발생 시 order 확대 재시도 (최대 2회)
-    signals = {p.signal for p in patterns}
-    if "BUY" in signals and "SELL" in signals and order < 20:
+    # 활성 여부 마킹 (비활성 패턴도 데이터 수집 목적으로 유지)
+    patterns = [
+        PatternMatch(
+            p.name, p.name_ko, p.signal, p.confidence, p.description,
+            active=(p.name in _ACTIVE_PATTERNS),
+        )
+        for p in patterns
+    ]
+
+    # 상충 패턴 발생 시 order 확대 재시도 (활성 패턴만 기준)
+    active_signals = {p.signal for p in patterns if p.active}
+    if "BUY" in active_signals and "SELL" in active_signals and order < 20:
         return analyze(
             highs, lows, closes, order=order + 5,
             timeframe=timeframe, min_swing_pct=min_swing_pct,
         )
-
     patterns = _filter_conflicting(patterns)
     patterns.sort(key=lambda p: p.confidence, reverse=True)
 

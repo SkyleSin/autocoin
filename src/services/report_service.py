@@ -5,11 +5,10 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sqlalchemy import text
-
+from analysis.patterns import _ACTIVE_PATTERNS
 from models.candle import Candle
 from models.signal import Signal
 from models.trade import Trade
@@ -316,6 +315,26 @@ async def generate_detail_report(session: AsyncSession) -> str:
             lines.append(f"{pat[:6]:<6} {sig:<4} {hit:>4} {evaluated:>4} {rate:>5}")
         lines.append("```\n")
 
+    # ── 4-1. 관찰 중 패턴 (비활성) ──
+    inactive_accuracy = await _get_inactive_pattern_accuracy(session)
+    if inactive_accuracy:
+        lines.append("🔬 *관찰 중 패턴 (비활성)*")
+        lines.append("```")
+        lines.append(f"{'패턴':<6} {'감지':>4} {'적중':>4} {'적중률':>5}")
+        lines.append("-" * 24)
+        for row in inactive_accuracy:
+            ko = _PATTERN_KO.get(row["pattern"], row["pattern"])
+            rate = (
+                f"{row['accuracy']:.0f}%"
+                if row["total"] > 0 else "N/A"
+            )
+            lines.append(
+                f"{ko[:6]:<6} {row['total']:>4}"
+                f" {row['hit']:>4} {rate:>5}"
+            )
+        lines.append("```")
+        lines.append("_활성화 기준: 적중률 50%+_\n")
+
     # ── 5. HOLD 판단 요약 ──
     hold_stats = (await session.execute(text("""
         SELECT
@@ -367,3 +386,26 @@ async def generate_detail_report(session: AsyncSession) -> str:
         )
 
     return "\n".join(lines)
+
+
+async def _get_inactive_pattern_accuracy(
+    session: AsyncSession,
+) -> list[dict]:
+    """비활성 패턴의 적중률을 pattern_accuracies 테이블에서 조회."""
+    from models.pattern_accuracy import PatternAccuracy
+
+    rows = (await session.execute(
+        select(PatternAccuracy)
+        .where(PatternAccuracy.total_count > 0)
+        .order_by(PatternAccuracy.total_count.desc())
+    )).scalars().all()
+    return [
+        {
+            "pattern": r.pattern_name,
+            "total": r.total_count,
+            "hit": r.hit_count,
+            "accuracy": r.accuracy_pct,
+        }
+        for r in rows
+        if r.pattern_name not in _ACTIVE_PATTERNS
+    ]

@@ -54,9 +54,11 @@ def evaluate(
 
     # ========== 1단계: 트리거 (검증된 패턴 + 지지/저항) ==========
 
-    # --- 차트 패턴 ---
+    # --- 차트 패턴 (활성 패턴만 트리거) ---
     if pattern_analysis and pattern_analysis.patterns:
         for p in pattern_analysis.patterns:
+            if not p.active:
+                continue
             score = p.confidence / 100 * 0.5
             if p.signal == "BUY":
                 buy_score += score
@@ -66,7 +68,7 @@ def evaluate(
                 sell_score += score
                 reasons.append(f"패턴: {p.name_ko} ({p.confidence}%)")
                 has_trigger = True
-            break  # 가장 강한 패턴 1개만
+            break  # 가장 강한 활성 패턴 1개만
 
     # --- 지지/저항 (돌파/이탈은 거래량 확인 필요) ---
     if sr_analysis and sr_analysis.signal != "NONE":
