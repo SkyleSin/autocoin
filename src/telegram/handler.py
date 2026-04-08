@@ -67,6 +67,8 @@ async def handle_update(
         await _cmd_history(token, chat_id, session_factory)
     elif text.startswith("/status"):
         await _cmd_status(token, chat_id, session_factory, settings)
+    elif text.startswith("/report_detail"):
+        await _cmd_report_detail(token, chat_id, session_factory)
     elif text.startswith("/report"):
         await _cmd_report(token, chat_id, session_factory, settings)
     else:
@@ -98,7 +100,8 @@ async def _cmd_help(token: str, chat_id: str) -> None:
 /risk reserve 50000 — 최소 유지 잔고 변경 (원)
 
 *리포트:*
-/report — 수익률 + 패턴 적중률 리포트"""
+/report — 수익률 + 패턴 적중률 리포트
+/report\\_detail — LLM 판단 정확도 상세 분석"""
     await send_message(token, chat_id, msg)
 
 
@@ -435,6 +438,23 @@ async def _cmd_report(
     except Exception:
         logger.exception("리포트 생성 실패")
         await send_message(token, chat_id, "❌ 리포트 생성 중 오류가 발생했습니다.")
+
+
+async def _cmd_report_detail(
+    token: str,
+    chat_id: str,
+    sf: async_sessionmaker[AsyncSession],
+) -> None:
+    """LLM 판단 정확도 상세 리포트."""
+    await send_message(token, chat_id, "⏳ 상세 리포트 생성 중...")
+    try:
+        from services.report_service import generate_detail_report
+        async with sf() as session:
+            report_text = await generate_detail_report(session)
+        await send_message(token, chat_id, report_text)
+    except Exception:
+        logger.exception("상세 리포트 생성 실패")
+        await send_message(token, chat_id, "❌ 상세 리포트 생성 중 오류가 발생했습니다.")
 
 
 # ── 콜백 핸들러 (인라인 버튼) ──
