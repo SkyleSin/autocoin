@@ -233,8 +233,28 @@ def _check_hit(signal_type: str, signal_price: float, after_price: float) -> boo
 
 
 async def get_accuracy_summary(session: AsyncSession) -> list[dict]:
-    """패턴별 적중률 요약 반환."""
+    """패턴별 적중률 요약 반환 (pattern_configs 우선, 폴백 pattern_accuracies)."""
+    from models.pattern_config import PatternConfig
+
     rows = (await session.execute(
+        select(PatternConfig)
+        .where(PatternConfig.total_count > 0)
+        .order_by(PatternConfig.total_count.desc())
+    )).scalars().all()
+
+    if rows:
+        return [
+            {
+                "pattern": r.name,
+                "total": r.total_count,
+                "hit": r.hit_count,
+                "accuracy": r.accuracy_pct,
+            }
+            for r in rows
+        ]
+
+    # 폴백: 레거시 테이블
+    legacy = (await session.execute(
         select(PatternAccuracy)
         .where(PatternAccuracy.total_count > 0)
         .order_by(PatternAccuracy.total_count.desc())
@@ -246,5 +266,5 @@ async def get_accuracy_summary(session: AsyncSession) -> list[dict]:
             "hit": r.hit_count,
             "accuracy": r.accuracy_pct,
         }
-        for r in rows
+        for r in legacy
     ]

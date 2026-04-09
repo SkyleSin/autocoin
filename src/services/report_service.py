@@ -105,14 +105,20 @@ async def generate_report(
             f"(적중 {verify_result['hit']}건)\n"
         )
 
-    # ── 4. 패턴 적중률 (누적) ──
+    # ── 4. 패턴 적중률 (누적, pattern_configs 기반) ──
     accuracy = await get_accuracy_summary(session)
     if accuracy:
+        # DB에서 영한 매핑 로드 (폴백: 하드코딩)
+        try:
+            from services.pattern_service import get_pattern_ko
+            pattern_ko = await get_pattern_ko(session)
+        except Exception:
+            pattern_ko = _PATTERN_KO
         lines.append("🎯 *패턴 적중률 (누적)*")
         total_all = sum(a["total"] for a in accuracy)
         hit_all = sum(a["hit"] for a in accuracy)
         for a in accuracy:
-            ko = _PATTERN_KO.get(a["pattern"], a["pattern"])
+            ko = pattern_ko.get(a["pattern"], _PATTERN_KO.get(a["pattern"], a["pattern"]))
             lines.append(
                 f"• {ko}: `{a['accuracy']:.0f}%` ({a['hit']}/{a['total']})"
             )
