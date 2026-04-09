@@ -133,23 +133,25 @@ async def record_shadow_trade(
         net = sell_amount - fee
         pnl = net - sell_qty * pos.avg_price
 
-        # KRW 증가
-        await _set_krw(session, krw + net)
-
         # 포지션 업데이트
         pos.qty -= sell_qty
         remaining_value = pos.qty * price
+        new_krw = krw + net
+
         if remaining_value < MIN_POSITION_KRW:
             # 잔여분 정리
             if pos.qty > 0:
                 leftover = pos.qty * price
                 leftover_fee = leftover * FEE_RATE
-                await _set_krw(session, krw + net + leftover - leftover_fee)
+                new_krw += leftover - leftover_fee
                 pnl += leftover - leftover_fee - pos.qty * pos.avg_price
                 sell_qty += pos.qty
                 sell_amount += leftover
                 fee += leftover_fee
             pos.qty = Decimal("0")
+
+        # KRW 갱신 (잔여분 정리 포함)
+        await _set_krw(session, new_krw)
 
         trade = ShadowTrade(
             market=market, side="SELL", price=price, qty=sell_qty,

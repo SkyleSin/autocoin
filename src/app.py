@@ -87,6 +87,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 ALTER TABLE active_alerts
                 ADD COLUMN IF NOT EXISTS acted_at TIMESTAMPTZ DEFAULT NULL
             """))
+            # signals에 version 컬럼 추가
+            await conn.execute(text("""
+                ALTER TABLE signals
+                ADD COLUMN IF NOT EXISTS version VARCHAR(16) NOT NULL DEFAULT '1.0.1'
+            """))
             # 이전 프로세스에서 Queue 상태로 남은 잡 → Ready로 복구
             await conn.execute(
                 text("UPDATE jobs SET status = :ready WHERE status = :queue"),

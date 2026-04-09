@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.candle import Candle
@@ -232,14 +231,22 @@ def _check_hit(signal_type: str, signal_price: float, after_price: float) -> boo
     return False
 
 
-async def get_accuracy_summary(session: AsyncSession) -> list[dict]:
-    """패턴별 적중률 요약 반환 (pattern_configs 우선, 폴백 pattern_accuracies)."""
+async def get_accuracy_summary(
+    session: AsyncSession,
+    include_inactive: bool = False,
+) -> list[dict]:
+    """패턴별 적중률 요약 반환 (pattern_configs 우선, 폴백 pattern_accuracies).
+
+    Args:
+        include_inactive: True면 total_count=0인 비활성 패턴도 포함
+    """
     from models.pattern_config import PatternConfig
 
+    stmt = select(PatternConfig)
+    if not include_inactive:
+        stmt = stmt.where(PatternConfig.total_count > 0)
     rows = (await session.execute(
-        select(PatternConfig)
-        .where(PatternConfig.total_count > 0)
-        .order_by(PatternConfig.total_count.desc())
+        stmt.order_by(PatternConfig.active.desc(), PatternConfig.total_count.desc())
     )).scalars().all()
 
     if rows:
@@ -249,11 +256,12 @@ async def get_accuracy_summary(session: AsyncSession) -> list[dict]:
                 "total": r.total_count,
                 "hit": r.hit_count,
                 "accuracy": r.accuracy_pct,
+                "active": r.active,
             }
             for r in rows
         ]
 
-    # 폴백: 레거시 테이블
+    # 폴백: 레거시 테이블 (active 정보 없음)
     legacy = (await session.execute(
         select(PatternAccuracy)
         .where(PatternAccuracy.total_count > 0)
@@ -265,6 +273,7 @@ async def get_accuracy_summary(session: AsyncSession) -> list[dict]:
             "total": r.total_count,
             "hit": r.hit_count,
             "accuracy": r.accuracy_pct,
+            "active": True,
         }
         for r in legacy
     ]

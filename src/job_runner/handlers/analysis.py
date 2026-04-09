@@ -350,7 +350,7 @@ async def handle_analyze_local_llm(
         pat_list = None
         if indicators and isinstance(indicators.get("patterns"), dict):
             pat_list = indicators["patterns"].get("patterns", [])
-        sell_rec = calculate_sell_recommendation(pat_list, confidence=confidence)
+        sell_rec = calculate_sell_recommendation(pat_list, confidence=llm_result.confidence)
         sell_rec_pct = sell_rec.recommended_pct
         sell_choices = sell_rec.choices
         alert_text += f"\n\n📊 *매도 추천:* {sell_rec.pattern_name} → `{sell_rec_pct}%`"
@@ -378,7 +378,7 @@ async def handle_analyze_local_llm(
                 market=market,
                 signal_type=llm_result.decision,
                 close_price=close_price,
-                confidence=confidence,
+                confidence=llm_result.confidence,
                 signal_id=signal.id if signal else None,
             )
         except Exception:

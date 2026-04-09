@@ -8,7 +8,6 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from analysis.patterns import get_active_patterns
 from models.candle import Candle
 from models.signal import Signal
 from models.trade import Trade
@@ -106,7 +105,7 @@ async def generate_report(
         )
 
     # ── 4. 패턴 적중률 (누적, pattern_configs 기반) ──
-    accuracy = await get_accuracy_summary(session)
+    accuracy = await get_accuracy_summary(session, include_inactive=True)
     if accuracy:
         # DB에서 영한 매핑 로드 (폴백: 하드코딩)
         try:
@@ -115,13 +114,20 @@ async def generate_report(
         except Exception:
             pattern_ko = _PATTERN_KO
         lines.append("🎯 *패턴 적중률 (누적)*")
-        total_all = sum(a["total"] for a in accuracy)
-        hit_all = sum(a["hit"] for a in accuracy)
+        total_all = sum(a["total"] for a in accuracy if a["total"] > 0)
+        hit_all = sum(a["hit"] for a in accuracy if a["total"] > 0)
         for a in accuracy:
-            ko = pattern_ko.get(a["pattern"], _PATTERN_KO.get(a["pattern"], a["pattern"]))
-            lines.append(
-                f"• {ko}: `{a['accuracy']:.0f}%` ({a['hit']}/{a['total']})"
+            ko = pattern_ko.get(
+                a["pattern"], _PATTERN_KO.get(a["pattern"], a["pattern"])
             )
+            if a["total"] > 0:
+                tag = "" if a.get("active", True) else " 📋관찰"
+                lines.append(
+                    f"• {ko}: `{a['accuracy']:.0f}%`"
+                    f" ({a['hit']}/{a['total']}){tag}"
+                )
+            elif not a.get("active", True):
+                lines.append(f"• {ko}: `N/A` (0건) 📋관찰")
         if total_all > 0:
             overall = hit_all / total_all * 100
             lines.append(f"• *전체*: `{overall:.0f}%` ({hit_all}/{total_all})")
@@ -347,18 +353,23 @@ async def generate_detail_report(session: AsyncSession) -> str:
         lines.append("```\n")
 
     # ── 4-1. 관찰 중 패턴 (비활성) ──
-    inactive_accuracy = await _get_inactive_pattern_accuracy(session)
+    all_accuracy = await get_accuracy_summary(session, include_inactive=True)
+    inactive_accuracy = [a for a in all_accuracy if not a.get("active", True)]
     if inactive_accuracy:
+        try:
+            from services.pattern_service import get_pattern_ko
+            pattern_ko = await get_pattern_ko(session)
+        except Exception:
+            pattern_ko = _PATTERN_KO
         lines.append("🔬 *관찰 중 패턴 (비활성)*")
         lines.append("```")
         lines.append(f"{'패턴':<6} {'감지':>4} {'적중':>4} {'적중률':>5}")
         lines.append("-" * 24)
         for row in inactive_accuracy:
-            ko = _PATTERN_KO.get(row["pattern"], row["pattern"])
-            rate = (
-                f"{row['accuracy']:.0f}%"
-                if row["total"] > 0 else "N/A"
+            ko = pattern_ko.get(
+                row["pattern"], _PATTERN_KO.get(row["pattern"], row["pattern"])
             )
+            rate = f"{row['accuracy']:.0f}%" if row["total"] > 0 else "N/A"
             lines.append(
                 f"{ko[:6]:<6} {row['total']:>4}"
                 f" {row['hit']:>4} {rate:>5}"
@@ -445,24 +456,3 @@ async def generate_detail_report(session: AsyncSession) -> str:
     return "\n".join(lines)
 
 
-async def _get_inactive_pattern_accuracy(
-    session: AsyncSession,
-) -> list[dict]:
-    """비활성 패턴의 적중률을 pattern_accuracies 테이블에서 조회."""
-    from models.pattern_accuracy import PatternAccuracy
-
-    rows = (await session.execute(
-        select(PatternAccuracy)
-        .where(PatternAccuracy.total_count > 0)
-        .order_by(PatternAccuracy.total_count.desc())
-    )).scalars().all()
-    return [
-        {
-            "pattern": r.pattern_name,
-            "total": r.total_count,
-            "hit": r.hit_count,
-            "accuracy": r.accuracy_pct,
-        }
-        for r in rows
-        if r.pattern_name not in get_active_patterns()
-    ]
