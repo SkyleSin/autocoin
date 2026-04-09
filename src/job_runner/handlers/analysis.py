@@ -350,10 +350,12 @@ async def handle_analyze_local_llm(
         pat_list = None
         if indicators and isinstance(indicators.get("patterns"), dict):
             pat_list = indicators["patterns"].get("patterns", [])
-        sell_rec = calculate_sell_recommendation(pat_list)
+        sell_rec = calculate_sell_recommendation(pat_list, confidence=confidence)
         sell_rec_pct = sell_rec.recommended_pct
         sell_choices = sell_rec.choices
         alert_text += f"\n\n📊 *매도 추천:* {sell_rec.pattern_name} → `{sell_rec_pct}%`"
+        if sell_rec_pct < 100:
+            alert_text += " (부분 매도 → 재진입 가능)"
 
     await send_signal_alert(
         settings.telegram_bot_token,
@@ -366,3 +368,18 @@ async def handle_analyze_local_llm(
         sell_recommended_pct=sell_rec_pct,
         sell_choices=sell_choices,
     )
+
+    # 섀도우 트레이딩 (자동화 가정 가상 매매 기록)
+    if llm_result.decision in ("BUY", "SELL") and session is not None:
+        try:
+            from services.shadow_service import record_shadow_trade
+            await record_shadow_trade(
+                session,
+                market=market,
+                signal_type=llm_result.decision,
+                close_price=close_price,
+                confidence=confidence,
+                signal_id=signal.id if signal else None,
+            )
+        except Exception:
+            logger.warning("shadow trade 기록 실패", exc_info=True)

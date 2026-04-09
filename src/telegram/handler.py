@@ -45,31 +45,34 @@ async def handle_update(
         logger.warning("telegram: 비인가 chat_id=%s 무시", msg_chat_id)
         return
 
-    # 명령어 라우팅
+    # 명령어 라우팅 (단축키 포함)
     if text.startswith("/start") or text.startswith("/help"):
         await _cmd_help(token, chat_id)
-    elif text.startswith("/balance"):
+    elif text.startswith("/b") and text.rstrip() in ("/b", "/balance"):
         await _cmd_balance(token, chat_id, settings)
     elif text.startswith("/markets"):
         keyword = text[8:].strip().upper() if len(text) > 8 else ""
         await _cmd_markets(token, chat_id, settings, keyword)
-    elif text.startswith("/assets"):
+    elif text.startswith("/a") and text.rstrip() in ("/a", "/assets"):
         await _cmd_assets(token, chat_id, session_factory)
     elif text.startswith("/add "):
         market = text[5:].strip().upper()
         await _cmd_add_asset(token, chat_id, session_factory, market)
+    elif text.startswith("/rm "):
+        market = text[4:].strip().upper()
+        await _cmd_remove_asset(token, chat_id, session_factory, market)
     elif text.startswith("/remove "):
         market = text[8:].strip().upper()
         await _cmd_remove_asset(token, chat_id, session_factory, market)
     elif text.startswith("/risk"):
         await _cmd_risk(token, chat_id, settings, text, session_factory)
-    elif text.startswith("/history"):
+    elif text.startswith("/h") and text.rstrip() in ("/h", "/history"):
         await _cmd_history(token, chat_id, session_factory)
-    elif text.startswith("/status"):
+    elif text.startswith("/s") and text.rstrip() in ("/s", "/status"):
         await _cmd_status(token, chat_id, session_factory, settings)
-    elif text.startswith("/report_detail"):
+    elif text.startswith("/rd") or text.startswith("/report_detail"):
         await _cmd_report_detail(token, chat_id, session_factory)
-    elif text.startswith("/report"):
+    elif text.startswith("/r") and text.rstrip() in ("/r", "/report"):
         await _cmd_report(token, chat_id, session_factory, settings)
     else:
         await send_message(token, chat_id, "알 수 없는 명령어입니다. /help 를 입력하세요.")
@@ -82,26 +85,25 @@ async def _cmd_help(token: str, chat_id: str) -> None:
     msg = """🤖 *autocoin 봇 명령어*
 
 *자산 관리:*
-/markets — 빗썸 마켓 목록 (전체)
-/markets BTC — 키워드로 검색
-/assets — 추적 중인 자산 목록
+/a — 추적 자산 목록
 /add KRW-BTC — 추적 자산 추가
-/remove KRW-BTC — 추적 자산 제거
+/rm KRW-BTC — 추적 자산 제거
+/markets BTC — 마켓 검색
 
 *조회:*
-/balance — 잔고 조회
-/status — 시스템 상태
-/history — 최근 매매 이력
+/b — 잔고 조회
+/s — 시스템 상태
+/h — 매매 이력
 
 *리스크 설정:*
-/risk — 현재 리스크 설정 보기
-/risk max\\_pct 10 — 1회 매매 상한 변경 (%)
-/risk daily 20 — 일일 매매 횟수 변경
-/risk reserve 50000 — 최소 유지 잔고 변경 (원)
+/risk — 현재 리스크 설정
+/risk max\\_pct 10 — 1회 매매 상한 (%)
+/risk daily 20 — 일일 매매 횟수
+/risk reserve 50000 — 최소 유지 잔고 (원)
 
 *리포트:*
-/report — 수익률 + 패턴 적중률 리포트
-/report\\_detail — LLM 판단 정확도 상세 분석"""
+/r — 수익률 + 적중률 리포트
+/rd — 상세 분석 리포트"""
     await send_message(token, chat_id, msg)
 
 
@@ -565,7 +567,8 @@ async def _handle_callback(
                 f"{holding_info}",
             )
 
-            # ActiveAlert에 acted_at 마킹 (동일 시그널 재알림 방지)
+            # 부분 매도(<100%)면 acted_at 미설정 → 재진입 SELL 허용
+            # 전량 매도(100%)면 acted_at 마킹 → 동일 시그널 재알림 방지
             async with sf() as session:
                 from datetime import UTC, datetime
 
@@ -573,12 +576,13 @@ async def _handle_callback(
                 from models.job import Job
                 from models.job_status import JobStatus
 
-                existing_alerts = (await session.execute(
-                    select(ActiveAlert).where(ActiveAlert.market == market)
-                )).scalars().all()
-                now = datetime.now(UTC)
-                for alert in existing_alerts:
-                    alert.acted_at = now
+                if sell_pct >= 100:
+                    existing_alerts = (await session.execute(
+                        select(ActiveAlert).where(ActiveAlert.market == market)
+                    )).scalars().all()
+                    now = datetime.now(UTC)
+                    for alert in existing_alerts:
+                        alert.acted_at = now
 
                 job = Job(
                     type="check_balance",

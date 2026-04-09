@@ -15,8 +15,12 @@ from fastapi import FastAPI
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from collector.daily_scheduler import daily_candle_scheduler
 from collector.scheduler import candle_scheduler
 from models.pattern_accuracy import PatternAccuracy
+from models.pattern_config import PatternConfig
+from models.pattern_evaluation import PatternEvaluation
+from models.shadow_trade import ShadowPortfolio, ShadowTrade
 from job_runner.poller import SHUTDOWN_QUEUE_ITEM, JobQueueItem, poller
 from job_runner.rate_limit import AsyncSlidingWindowRateLimiter
 from job_runner.worker import worker as job_worker
@@ -70,6 +74,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 AppConfig.__table__,
                 ActiveAlert.__table__,
                 PatternAccuracy.__table__,
+                PatternConfig.__table__,
+                PatternEvaluation.__table__,
+                ShadowTrade.__table__,
+                ShadowPortfolio.__table__,
             ):
                 await conn.run_sync(
                     lambda sync_conn, t=table: t.create(sync_conn, checkfirst=True),
@@ -138,6 +146,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             name="report-scheduler",
         )
 
+        daily_candle_task = asyncio.create_task(
+            daily_candle_scheduler(session_factory, settings),
+            name="daily-candle-scheduler",
+        )
+
         from safety.monitor import safety_monitor
         safety_monitor_task = asyncio.create_task(
             safety_monitor(session_factory, settings),
@@ -150,6 +163,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.candle_scheduler_task = candle_scheduler_task
         app.state.telegram_poller_task = telegram_poller_task
         app.state.report_scheduler_task = report_scheduler_task
+        app.state.daily_candle_task = daily_candle_task
         app.state.safety_monitor_task = safety_monitor_task
         logger.info(
             "job runner: poller=1 workers=%s bithumb_max_rps=%s "
@@ -179,6 +193,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         logger.info("lifespan: stop telegram_poller")
         telegram_poller_task.cancel()
         await asyncio.gather(telegram_poller_task, return_exceptions=True)
+
+        logger.info("lifespan: stop daily_candle_scheduler")
+        daily_candle_task.cancel()
+        await asyncio.gather(daily_candle_task, return_exceptions=True)
 
         logger.info("lifespan: stop candle_scheduler")
         candle_scheduler_task.cancel()

@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from analysis.patterns import _ACTIVE_PATTERNS
+from analysis.patterns import get_active_patterns
 from models.candle import Candle
 from models.signal import Signal
 from models.trade import Trade
@@ -142,6 +142,31 @@ async def generate_report(
                 f"({kst:%H:%M}) {src_label} {verified_mark}"
             )
         lines.append("")
+
+    # ── 6. 섀도우 트레이딩 (자동화 가정) ──
+    try:
+        from services.shadow_service import get_shadow_summary
+        shadow = await get_shadow_summary(session)
+        if shadow["buy_count"] > 0 or shadow["sell_count"] > 0:
+            lines.append("🔮 *섀도우 트레이딩* (자동화 가정)")
+            lines.append(f"• 수익률: `{shadow['return_pct']:+.2f}%`")
+            lines.append(
+                f"• 매수 `{shadow['buy_count']}건` / 매도 `{shadow['sell_count']}건`"
+            )
+            if shadow["sell_count"] > 0:
+                lines.append(f"• 승률: `{shadow['win_rate']:.0f}%`")
+            lines.append(
+                f"• 실현 손익: `{shadow['total_pnl']:+,.0f}원`"
+                f" | 수수료: `{shadow['total_fees']:,.0f}원`"
+            )
+            if shadow["positions"]:
+                for p in shadow["positions"]:
+                    lines.append(
+                        f"• {p['market']}: `{p['qty']:.4f}` @ `{p['avg_price']:,.0f}`"
+                    )
+            lines.append("")
+    except Exception:
+        pass  # 섀도우 테이블 미생성 시 무시
 
     return "\n".join(lines)
 
@@ -385,6 +410,32 @@ async def generate_detail_report(session: AsyncSession) -> str:
             f" (BUY/SELL `{llm_bs}` HOLD `{llm_hold}`)"
         )
 
+    # ── 7. 섀도우 트레이딩 상세 ──
+    try:
+        from services.shadow_service import get_shadow_summary
+        shadow = await get_shadow_summary(session)
+        if shadow["buy_count"] > 0 or shadow["sell_count"] > 0:
+            lines.append("\n🔮 *섀도우 트레이딩* (자동화 가정)")
+            lines.append("```")
+            lines.append(f"초기 자본:  1,000,000원")
+            lines.append(f"현재 평가:  {shadow['total_value']:>12,.0f}원")
+            lines.append(f"수익률:     {shadow['return_pct']:>+11.2f}%")
+            lines.append(f"실현 손익:  {shadow['total_pnl']:>+12,.0f}원")
+            lines.append(f"수수료:     {shadow['total_fees']:>12,.0f}원")
+            lines.append(f"매수/매도:  {shadow['buy_count']}건 / {shadow['sell_count']}건")
+            if shadow["sell_count"] > 0:
+                lines.append(f"승률:       {shadow['win_rate']:>11.0f}%")
+            lines.append("```")
+            if shadow["positions"]:
+                lines.append("_보유:_")
+                for p in shadow["positions"]:
+                    lines.append(
+                        f"  {p['market']}: `{p['qty']:.4f}` @ `{p['avg_price']:,.0f}`"
+                    )
+            lines.append("")
+    except Exception:
+        pass
+
     return "\n".join(lines)
 
 
@@ -407,5 +458,5 @@ async def _get_inactive_pattern_accuracy(
             "accuracy": r.accuracy_pct,
         }
         for r in rows
-        if r.pattern_name not in _ACTIVE_PATTERNS
+        if r.pattern_name not in get_active_patterns()
     ]

@@ -59,3 +59,9 @@ class Signal(Base):
         default=False,
         comment="적중률 검증 완료 여부",
     )
+    version: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default="1.0.1",
+        comment="판단 기준 버전 (기준 변경 시 signals_bak으로 아카이빙)",
+    )

@@ -8,41 +8,47 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# 패턴별 기본 투자 비율 (KRW 잔고 대비 %)
-# 이미지 참고 신뢰도 기반:
-#   100% 신뢰 패턴 → 높은 비율
-#   65% 신뢰 패턴 → 중간 비율
-#   50% 이하 → 낮은 비율
-PATTERN_ALLOCATION: dict[str, float] = {
-    # 매수 패턴
-    "double_bottom": 25.0,              # 쌍바닥 — 80% 신뢰
-    "triple_bottom": 30.0,              # 트리플바닥 — 강한 매수
-    "inverse_head_and_shoulders": 35.0, # 역머리어깨 — 매우 강한 매수
-    "ascending_triangle": 20.0,         # 상승삼각형 — 65% 신뢰
-    "bull_flag": 30.0,                  # 상승깃발 — 80% 신뢰
-    "falling_wedge": 25.0,              # 하락쐐기 — 반전 매수
-    # 매도 패턴
-    "double_top": 30.0,                 # 쌍봉 — 100% 신뢰, 강한 매도
-    "triple_top": 35.0,                 # 삼중천정 — 100% 신뢰
-    "head_and_shoulders": 35.0,         # 머리어깨 — 90% 신뢰
-    "descending_triangle": 20.0,        # 하락삼각형 — 65% 신뢰
-    "bear_flag": 30.0,                  # 하락깃발 — 80% 신뢰
-    "rising_wedge": 25.0,               # 상승쐐기 — 반전 매도
+# 패턴별 기본 투자 비율 — DB(pattern_configs)에서 관리, 여기는 폴백
+_FALLBACK_ALLOCATION: dict[str, float] = {
+    "ascending_triangle": 20.0, "bull_flag": 30.0, "falling_wedge": 25.0,
+    "double_bottom": 25.0, "triple_bottom": 30.0,
+    "inverse_head_and_shoulders": 35.0,
+    "double_top": 30.0, "triple_top": 35.0, "head_and_shoulders": 35.0,
+    "descending_triangle": 20.0, "bear_flag": 30.0, "rising_wedge": 25.0,
+}
+_FALLBACK_SELL_REC: dict[str, int] = {
+    "double_top": 100, "triple_top": 100, "head_and_shoulders": 80,
+    "bear_flag": 80, "rising_wedge": 60, "descending_triangle": 60,
 }
 
-# 패턴 없을 때 기본 비율
 DEFAULT_ALLOCATION_PCT = 10.0
+SELL_DEFAULT_RECOMMENDATION = 40
 
-# 매도 패턴별 추천 매도 비율 (보유량 대비 %)
-SELL_PATTERN_RECOMMENDATION: dict[str, int] = {
-    "double_top": 100,          # 쌍봉 — 전량 매도 추천
-    "triple_top": 100,          # 삼중천정 — 전량 매도
-    "head_and_shoulders": 80,   # 머리어깨 — 80% 매도
-    "bear_flag": 80,            # 하락깃발 — 80% 매도
-    "rising_wedge": 60,         # 상승쐐기 — 60% 매도
-    "descending_triangle": 60,  # 하락삼각형 — 60% 매도
-}
-SELL_DEFAULT_RECOMMENDATION = 40  # 패턴 없을 때 기본 추천
+# DB에서 로드된 캐시 (pattern_service가 갱신)
+_db_allocation: dict[str, float] | None = None
+_db_sell_rec: dict[str, int] | None = None
+
+
+def set_pattern_sizing(
+    allocation: dict[str, float], sell_rec: dict[str, int],
+) -> None:
+    """DB에서 로드된 포지션 사이징으로 업데이트."""
+    global _db_allocation, _db_sell_rec
+    _db_allocation = allocation
+    _db_sell_rec = sell_rec
+
+
+def _get_allocation() -> dict[str, float]:
+    return _db_allocation if _db_allocation is not None else _FALLBACK_ALLOCATION
+
+
+def _get_sell_rec() -> dict[str, int]:
+    return _db_sell_rec if _db_sell_rec is not None else _FALLBACK_SELL_REC
+
+
+# 하위 호환용 (외부 참조)
+PATTERN_ALLOCATION = _FALLBACK_ALLOCATION
+SELL_PATTERN_RECOMMENDATION = _FALLBACK_SELL_REC
 
 # 자동 조절 기준
 MIN_ALLOCATION_PCT = 3.0    # 절대 하한 (매수용)
@@ -80,7 +86,7 @@ def calculate_position(
         top = patterns[0]
         name = top.get("name", "")
         pattern_name = top.get("name_ko", name)
-        raw_pct = PATTERN_ALLOCATION.get(name, DEFAULT_ALLOCATION_PCT)
+        raw_pct = _get_allocation().get(name, DEFAULT_ALLOCATION_PCT)
         # 패턴 기본 비율(10~35%)을 0.3~1.0 가중치로 변환
         pattern_weight = max(0.3, min(raw_pct / 35.0, 1.0))
         adjustments.append(f"패턴 {pattern_name} 가중치 {pattern_weight:.0%}")
@@ -148,19 +154,44 @@ class SellRecommendation:
 
 def calculate_sell_recommendation(
     patterns: list[dict[str, Any]] | None = None,
+    *,
+    confidence: float = 0.5,
 ) -> SellRecommendation:
-    """패턴 기반 매도 비율 추천 + 20% 단위 선택지."""
+    """확신도 + 패턴 기반 매도 비율 추천 + 20% 단위 선택지.
+
+    확신도 기반 부분 매도 전략:
+      conf >= 0.8 → 80%, >= 0.6 → 60%, >= 0.4 → 40%, 그 외 → 20%
+    패턴이 전량 매도(100%)를 추천하면 확신도와 무관하게 상한 적용.
+    """
     choices = [20, 40, 60, 80, 100]
     pattern_name = "없음"
-    recommended = SELL_DEFAULT_RECOMMENDATION
 
+    # 1) 확신도 기반 비율 (기본)
+    if confidence >= 0.8:
+        conf_pct = 80
+    elif confidence >= 0.6:
+        conf_pct = 60
+    elif confidence >= 0.4:
+        conf_pct = 40
+    else:
+        conf_pct = 20
+
+    # 2) 패턴 기반 비율 (상한 보정)
+    pattern_pct = SELL_DEFAULT_RECOMMENDATION
     if patterns:
         top = patterns[0]
         name = top.get("name", "")
         pattern_name = top.get("name_ko", name)
-        recommended = SELL_PATTERN_RECOMMENDATION.get(name, SELL_DEFAULT_RECOMMENDATION)
+        pattern_pct = _get_sell_rec().get(name, SELL_DEFAULT_RECOMMENDATION)
 
-    # 추천값을 20% 단위로 스냅
+    # 패턴이 전량(100%) 추천이면 확신도와 무관하게 전량 매도
+    if pattern_pct >= 100:
+        recommended = 100
+    else:
+        # 확신도 기반 비율을 기본으로, 패턴 추천이 더 높으면 상향
+        recommended = max(conf_pct, pattern_pct)
+
+    # 20% 단위 스냅
     recommended = max(20, min(100, round(recommended / 20) * 20))
 
     return SellRecommendation(

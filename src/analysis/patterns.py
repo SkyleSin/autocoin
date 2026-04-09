@@ -12,18 +12,29 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-# ── 활성 패턴 화이트리스트 (백테스트 적중률 50%+ 기반) ──
+# ── 활성 패턴 (DB pattern_configs에서 관리, 여기는 폴백 기본값) ──
 _ACTIVE_PATTERNS: set[str] = {
-    "double_top",           # 쌍봉 67%
-    "triple_top",           # 삼중천정 50%+
-    "triple_bottom",        # 트리플바닥 55%+
-    "head_and_shoulders",   # 머리어깨 56%
-    "falling_wedge",        # 하락쐐기 70%
-    "bull_flag",            # 상승깃발 58%
-    "bear_flag",            # 하락깃발 80%
+    "ascending_triangle",   # 상승삼각형 75% (7d)
+    "head_and_shoulders",   # 머리어깨 60% (7d)
+    "bear_flag",            # 하락깃발 57% (7d)
+    "bull_flag",            # 상승깃발 52% (7d)
     "box_range",            # 박스권 (HOLD, 정보용)
     "symmetric_triangle",   # 대칭삼각형 (HOLD, 정보용)
 }
+
+# DB에서 로드된 활성 패턴 캐시 (서버 기동 시 + 주기적 갱신)
+_db_active_patterns: set[str] | None = None
+
+
+def set_active_patterns(names: set[str]) -> None:
+    """DB에서 로드된 활성 패턴으로 업데이트."""
+    global _db_active_patterns
+    _db_active_patterns = names
+
+
+def get_active_patterns() -> set[str]:
+    """현재 활성 패턴 반환 (DB 캐시 우선, 없으면 하드코딩 폴백)."""
+    return _db_active_patterns if _db_active_patterns is not None else _ACTIVE_PATTERNS
 
 # ── 데이터 클래스 ──
 
@@ -570,7 +581,7 @@ def analyze(
     patterns = [
         PatternMatch(
             p.name, p.name_ko, p.signal, p.confidence, p.description,
-            active=(p.name in _ACTIVE_PATTERNS),
+            active=(p.name in get_active_patterns()),
         )
         for p in patterns
     ]
