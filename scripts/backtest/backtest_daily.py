@@ -86,7 +86,7 @@ def evaluate_signal_at(df: pd.DataFrame, idx: int, eval_bars: int) -> dict | Non
         return None
 
     close_price = float(closes.iloc[-1])
-    pat = analyze_patterns(highs, lows, closes, timeframe=TIMEFRAME)
+    pat = analyze_patterns(highs, lows, closes, timeframe=TIMEFRAME, volumes=volumes)
     sr = analyze_sr(highs, lows, closes)
     signal = evaluate(snap, close_price, pattern_analysis=pat, sr_analysis=sr)
 
