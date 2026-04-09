@@ -7,7 +7,12 @@ import pandas as pd
 from analysis.pattern_helpers import check_volume, slope_pct
 from analysis.pattern_utils import PatternMatch, Trendline
 
-_FLAT_THRESHOLD = 0.01  # 봉당 0.01% 미만이면 수평
+# 타임프레임별 수평 판정 임계값 (봉당 가격변동률 %)
+_FLAT_THRESHOLDS = {"1d": 0.03, "4h": 0.02, "1h": 0.015, "15m": 0.01}
+
+
+def _flat_threshold(timeframe: str) -> float:
+    return _FLAT_THRESHOLDS.get(timeframe, 0.01)
 
 
 def classify_trendline_patterns(
@@ -16,17 +21,19 @@ def classify_trendline_patterns(
     closes: pd.Series,
     avg_price: float,
     volumes: pd.Series | None = None,
+    timeframe: str = "15m",
 ) -> list[PatternMatch]:
     """저항/지지 추세선 기울기 조합으로 패턴 분류 (점진적 수렴 검증)."""
     res_pct = slope_pct(res_line, avg_price)
     sup_pct = slope_pct(sup_line, avg_price)
 
-    res_flat = abs(res_pct) < _FLAT_THRESHOLD
-    sup_flat = abs(sup_pct) < _FLAT_THRESHOLD
-    res_rising = res_pct >= _FLAT_THRESHOLD
-    res_falling = res_pct <= -_FLAT_THRESHOLD
-    sup_rising = sup_pct >= _FLAT_THRESHOLD
-    sup_falling = sup_pct <= -_FLAT_THRESHOLD
+    flat_th = _flat_threshold(timeframe)
+    res_flat = abs(res_pct) < flat_th
+    sup_flat = abs(sup_pct) < flat_th
+    res_rising = res_pct >= flat_th
+    res_falling = res_pct <= -flat_th
+    sup_rising = sup_pct >= flat_th
+    sup_falling = sup_pct <= -flat_th
 
     # 점진적 수렴: 시작→중간→끝 갭이 순차적으로 줄어야 함
     gap_start = res_line.price_at(res_line.start_idx) - sup_line.price_at(sup_line.start_idx)
@@ -73,7 +80,13 @@ def classify_trendline_patterns(
             "고점 하락 + 저점 상승 → 수렴 중, 방향 미확정",
         ))
     elif res_rising and sup_rising and converging:
-        pass  # 상승쐐기: 비활성 (백테스트 적중률 0~23%)
+        # 상승쐐기 (라이징웨지): 관찰 모드로 감지 (active=False로 마킹됨)
+        if current < sup_current:
+            patterns.append(PatternMatch(
+                "rising_wedge", "상승쐐기", "SELL", 60,
+                "고점·저점 상승하며 수렴, 하단 이탈 → 하락 전환",
+                volume_confirmed=vol,
+            ))
     elif res_falling and sup_falling and converging:
         # 하락쐐기: 저항선이 지지선보다 더 가파르게 하락해야 수렴
         if abs(res_pct) > abs(sup_pct) and current > res_current:

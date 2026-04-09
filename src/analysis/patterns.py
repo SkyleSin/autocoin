@@ -10,6 +10,7 @@ from analysis.pattern_structural2 import (
     detect_head_and_shoulders,
     detect_inverse_head_and_shoulders,
 )
+from analysis.pattern_trend_cont import detect_bearish_continuation, detect_bullish_continuation
 from analysis.pattern_trendline import classify_trendline_patterns
 from analysis.pattern_triple import detect_triple_bottom, detect_triple_top
 from analysis.pattern_utils import (
@@ -24,7 +25,13 @@ _ACTIVE_PATTERNS: set[str] = {
     "bear_flag", "bull_flag", "box_range", "symmetric_triangle",
 }
 _db_active_patterns: set[str] | None = None
-_MAX_FIT_POINTS = 5
+
+# 타임프레임별 추세선 피팅 포인트 수 (일봉은 피크 자체가 적으므로 넉넉하게)
+_FIT_POINTS = {"1d": 8, "4h": 6, "1h": 6, "15m": 5, "5m": 5}
+
+
+def _max_fit_points(timeframe: str) -> int:
+    return _FIT_POINTS.get(timeframe, 5)
 
 def set_active_patterns(names: set[str]) -> None:
     global _db_active_patterns  # noqa: PLW0603
@@ -65,7 +72,8 @@ def analyze(
 
     peaks = find_peaks(highs, order)
     valleys = find_valleys(lows, order)
-    rp, rv = peaks[-_MAX_FIT_POINTS:], valleys[-_MAX_FIT_POINTS:]
+    mfp = _max_fit_points(timeframe)
+    rp, rv = peaks[-mfp:], valleys[-mfp:]
     res = fit_trendline(rp, [float(highs.iloc[p]) for p in rp]) if len(rp) >= 2 else None
     sup = fit_trendline(rv, [float(lows.iloc[v]) for v in rv]) if len(rv) >= 2 else None
 
@@ -83,10 +91,21 @@ def analyze(
             patterns.append(r)
     if res and sup:
         patterns.extend(
-            classify_trendline_patterns(res, sup, closes, float(closes.mean()), volumes),
+            classify_trendline_patterns(
+                res, sup, closes, float(closes.mean()), volumes, timeframe=timeframe,
+            ),
         )
     for flag_det in [detect_bull_flag, detect_bear_flag]:
         r = flag_det(highs, lows, closes, peaks, valleys)
+        if r:
+            patterns.append(r)
+
+    # 4) 추세 지속 패턴 (고점·저점 연속 상승/하락)
+    for trend_det in [
+        lambda: detect_bullish_continuation(highs, lows, closes, peaks, valleys, volumes),
+        lambda: detect_bearish_continuation(highs, lows, closes, peaks, valleys, volumes),
+    ]:
+        r = trend_det()
         if r:
             patterns.append(r)
 
