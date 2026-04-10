@@ -36,8 +36,9 @@ async def _run_technical_analysis(
     timeframe: str,
     candle_limit: int = 200,
     ref_timeframes: list[str] | None = None,
+    pattern_markets: list[str] | None = None,
 ) -> dict[str, Any]:
-    """DB에서 캔들 로드 → 지표 계산 → Signal 저장 → 결과 반환."""
+    """DB에서 캔들 로드 → 지표 계��� → Signal 저장 → 결과 반��."""
     result_rows = await session.execute(
         select(Candle)
         .where(Candle.market == market, Candle.timeframe == timeframe)
@@ -62,7 +63,9 @@ async def _run_technical_analysis(
     if snap is None:
         return {"status": "compute_failed", "candle_count": len(candles)}
 
-    pat = analyze_patterns(highs, lows, closes, timeframe=timeframe, volumes=volumes)
+    # 패턴 분석: 대상 마켓에서만 실행 (BTC, ETH 등)
+    use_patterns = not pattern_markets or market in pattern_markets
+    pat = analyze_patterns(highs, lows, closes, timeframe=timeframe, volumes=volumes) if use_patterns else None
     sr = analyze_sr(highs, lows, closes)
 
     close_price = float(candles[-1].close)
@@ -169,8 +172,10 @@ async def handle_analyze_technical(
     ref_tf_str = settings.candle_ref_timeframes
     if ref_tf_str.strip():
         ref_timeframes = [tf.strip() for tf in ref_tf_str.split(",") if tf.strip()]
+    pat_markets = [m.strip() for m in settings.pattern_markets.split(",") if m.strip()]
     result = await _run_technical_analysis(
         session, market, timeframe, ref_timeframes=ref_timeframes,
+        pattern_markets=pat_markets,
     )
     job.response = result
     job.status = JobStatus.Complete.value

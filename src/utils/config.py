@@ -159,8 +159,13 @@ class Settings(BaseSettings):
     )
     candle_ref_timeframes: str = Field(
         default="1h,4h",
-        description="참조 타임프레임 (쉼표 구분). 추세 확인용으로만 수집, 분석 체이닝 안 함.",
+        description="참�� 타임프레임 (쉼표 구분). 추세 확인용으로만 수집, 분석 체이닝 안 함.",
         validation_alias="AUTOCOIN_CANDLE_REF_TIMEFRAMES",
+    )
+    pattern_markets: str = Field(
+        default="KRW-BTC,KRW-ETH",
+        description="패턴 분�� 대상 마켓 (쉼표 구분). 이 외 마켓은 패턴 트리거 미적용.",
+        validation_alias="AUTOCOIN_PATTERN_MARKETS",
     )
 
     log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")

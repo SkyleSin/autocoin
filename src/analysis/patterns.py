@@ -21,7 +21,7 @@ from analysis.pattern_utils import (
 )
 
 _ACTIVE_PATTERNS: set[str] = {
-    "ascending_triangle", "head_and_shoulders",
+    "ascending_triangle",
     "bear_flag", "bull_flag", "box_range", "symmetric_triangle",
 }
 _db_active_patterns: set[str] | None = None

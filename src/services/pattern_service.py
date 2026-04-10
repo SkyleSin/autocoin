@@ -88,7 +88,7 @@ async def evaluate_pending_signals(session: AsyncSession) -> dict[str, int]:
 
         signals = (await session.execute(
             select(Signal).where(
-                Signal.source.in_(["deepseek", "local_llm"]),
+                Signal.source == "technical",
                 Signal.signal_type.in_(["BUY", "SELL"]),
                 Signal.verified.is_(False),
                 Signal.created_at >= target_start,
