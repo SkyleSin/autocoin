@@ -75,7 +75,7 @@ async def _run_technical_analysis(
 
     combined_indicators = {
         **snap.to_dict(),
-        "patterns": pat.to_dict(),
+        "patterns": pat.to_dict() if pat else {"patterns": [], "conflicts": []},
         "support_resistance": sr.to_dict(),
     }
 
@@ -273,8 +273,9 @@ async def handle_analyze_local_llm(
                 pat_name = pats[0].get("name_ko", "-")
         hold_text = (
             f"⏸ {coin} | HOLD ({llm_result.confidence:.0%})"
-            f" | {pat_name} | {llm_result.reason[:60]}"
-            f" — {llm_source}"
+            f" | {pat_name} — {llm_source}\n"
+            f"1차: {tech_signal} | {', '.join(tech_reasons[:3])}\n"
+            f"LLM: {llm_result.reason[:80]}"
         )
         from telegram.bot import send_message
 

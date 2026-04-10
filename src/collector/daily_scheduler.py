@@ -256,7 +256,14 @@ async def daily_candle_scheduler(
                     # 적중률 판정 (7일 전 시그널)
                     try:
                         from services.pattern_service import evaluate_pending_signals
-                        eval_result = await evaluate_pending_signals(session)
+                        pat_markets = [
+                            m.strip()
+                            for m in settings.pattern_markets.split(",")
+                            if m.strip()
+                        ]
+                        eval_result = await evaluate_pending_signals(
+                            session, pattern_markets=pat_markets,
+                        )
                         if eval_result["evaluated"] > 0:
                             logger.info(
                                 "daily pattern eval: %d evaluated, %d hit",

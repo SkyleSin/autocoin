@@ -68,8 +68,14 @@ async def get_sell_recommendation(session: AsyncSession, pattern_name: str) -> i
     return cfg.sell_recommendation_pct if cfg else 40
 
 
-async def evaluate_pending_signals(session: AsyncSession) -> dict[str, int]:
+async def evaluate_pending_signals(
+    session: AsyncSession,
+    pattern_markets: list[str] | None = None,
+) -> dict[str, int]:
     """7일 전 미판정 시그널을 일괄 판정하고 pattern_evaluations에 기록.
+
+    Args:
+        pattern_markets: 패턴 적중률 추적 대상 마켓 (None이면 전체)
 
     Returns:
         {"evaluated": N, "hit": N}
@@ -86,14 +92,18 @@ async def evaluate_pending_signals(session: AsyncSession) -> dict[str, int]:
         target_start = now - timedelta(days=eval_days + 1)
         target_end = now - timedelta(days=eval_days)
 
+        conditions = [
+            Signal.source == "technical",
+            Signal.signal_type.in_(["BUY", "SELL"]),
+            Signal.verified.is_(False),
+            Signal.created_at >= target_start,
+            Signal.created_at < target_end,
+        ]
+        if pattern_markets:
+            conditions.append(Signal.market.in_(pattern_markets))
+
         signals = (await session.execute(
-            select(Signal).where(
-                Signal.source == "technical",
-                Signal.signal_type.in_(["BUY", "SELL"]),
-                Signal.verified.is_(False),
-                Signal.created_at >= target_start,
-                Signal.created_at < target_end,
-            )
+            select(Signal).where(*conditions)
         )).scalars().all()
 
         for sig in signals:
