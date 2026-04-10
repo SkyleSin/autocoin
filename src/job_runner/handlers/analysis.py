@@ -258,6 +258,28 @@ async def handle_analyze_local_llm(
     if not (settings.telegram_bot_token and settings.telegram_chat_id):
         return
 
+    # HOLD 판단 → 간략 알림 전송 (시스템 동작 확인용)
+    if llm_result.decision == "HOLD":
+        coin = market.replace("KRW-", "")
+        pat_name = "-"
+        if indicators and isinstance(indicators.get("patterns"), dict):
+            pats = indicators["patterns"].get("patterns", [])
+            if pats:
+                pat_name = pats[0].get("name_ko", "-")
+        hold_text = (
+            f"⏸ {coin} | HOLD ({llm_result.confidence:.0%})"
+            f" | {pat_name} | {llm_result.reason[:60]}"
+            f" — {llm_source}"
+        )
+        from telegram.bot import send_message
+
+        await send_message(
+            settings.telegram_bot_token,
+            settings.telegram_chat_id,
+            hold_text,
+        )
+        return
+
     # SELL 시그널 → 보유량 확인을 check_alert 앞에서 수행
     # 보유량 없으면 ActiveAlert 생성 방지 + 기존 것 삭제
     if llm_result.decision == "SELL":

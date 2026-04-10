@@ -261,25 +261,32 @@ async def generate_detail_report(session: AsyncSession) -> str:
             ORDER BY c.open_at ASC LIMIT 1
         ) fp ON true
         WHERE s.source IN ('deepseek', 'local_llm')
-          AND s.signal_type IN ('BUY', 'SELL')
-        ORDER BY s.created_at ASC
+        ORDER BY s.created_at DESC
         LIMIT 20
     """))).fetchall()
 
     if recent_llm:
-        lines.append("📋 *최근 LLM 판단*")
+        lines.append("📋 *최근 LLM 판단* (20건)")
         lines.append("```")
         lines.append(f"{'시간':>11} {'코인':<4} {'패턴':<5} {'판단':<4} {'RSI':>4} {'4h후':>6} {'결과':>2}")
         lines.append("-" * 42)
-        for row in recent_llm:
+        for row in reversed(recent_llm):
             kst, coin, pattern, decision, conf, sig_price, fut_price, rsi_raw, macd_h, sr_sig = row
             pat_short = (pattern or "-")[:5]
             rsi_str = f"{float(rsi_raw):.0f}" if rsi_raw else "-"
 
-            if fut_price and sig_price and float(sig_price) > 0:
+            if decision == "HOLD":
+                # HOLD: 4h 후 변동폭이 작으면 적중
+                if fut_price and sig_price and float(sig_price) > 0:
+                    chg = (float(fut_price) - float(sig_price)) / float(sig_price) * 100
+                    chg_str = f"{chg:+.1f}%"
+                    mark = "O" if abs(chg) < 2.0 else "X"
+                else:
+                    chg_str = " 대기"
+                    mark = "-"
+            elif fut_price and sig_price and float(sig_price) > 0:
                 chg = (float(fut_price) - float(sig_price)) / float(sig_price) * 100
                 chg_str = f"{chg:+.1f}%"
-                # 판단이 맞았는지
                 if decision == "BUY":
                     mark = "O" if chg > 0 else "X"
                 else:
@@ -293,15 +300,7 @@ async def generate_detail_report(session: AsyncSession) -> str:
                 f" {rsi_str:>4} {chg_str:>6} {mark:>2}"
             )
         lines.append("```")
-
-        # 지표 범례
-        sr_map = {
-            "SUPPORT_BOUNCE": "지지반등",
-            "SUPPORT_BREAK": "지지이탈",
-            "RESISTANCE_BREAK": "저항돌파",
-            "RESISTANCE_REJECT": "저항저항",
-        }
-        lines.append("_결과: O=판단 적중 X=실패 -=대기_")
+        lines.append("_결과: O=적중 X=실패 -=대기 (HOLD: 4h 내 2% 이내=O)_")
         lines.append("_4h 후 변동은 참고용. 실현 수익률이 실제 성과._\n")
 
     # ── 3. 패턴별 적중률 (테이블 기반 집계) ──
@@ -352,27 +351,37 @@ async def generate_detail_report(session: AsyncSession) -> str:
             lines.append(f"{pat[:6]:<6} {sig:<4} {hit:>4} {evaluated:>4} {rate:>5}")
         lines.append("```\n")
 
-    # ── 4-1. 관찰 중 패턴 (비활성) ──
+    # ── 4-1. 전체 패턴 적중률 (활성 + 비활성) ──
     all_accuracy = await get_accuracy_summary(session, include_inactive=True)
-    inactive_accuracy = [a for a in all_accuracy if not a.get("active", True)]
-    if inactive_accuracy:
+    if all_accuracy:
         try:
             from services.pattern_service import get_pattern_ko
             pattern_ko = await get_pattern_ko(session)
         except Exception:
             pattern_ko = _PATTERN_KO
-        lines.append("🔬 *관찰 중 패턴 (비활성)*")
+        active_acc = [a for a in all_accuracy if a.get("active", True)]
+        inactive_acc = [a for a in all_accuracy if not a.get("active", True)]
+        lines.append("📐 *전체 패턴 적중률*")
         lines.append("```")
-        lines.append(f"{'패턴':<6} {'감지':>4} {'적중':>4} {'적중률':>5}")
-        lines.append("-" * 24)
-        for row in inactive_accuracy:
+        lines.append(f"{'패턴':<6} {'감지':>4} {'적중':>4} {'적중률':>5} {'상태':>4}")
+        lines.append("-" * 30)
+        for row in active_acc:
             ko = pattern_ko.get(
                 row["pattern"], _PATTERN_KO.get(row["pattern"], row["pattern"])
             )
             rate = f"{row['accuracy']:.0f}%" if row["total"] > 0 else "N/A"
             lines.append(
                 f"{ko[:6]:<6} {row['total']:>4}"
-                f" {row['hit']:>4} {rate:>5}"
+                f" {row['hit']:>4} {rate:>5} {'활성':>4}"
+            )
+        for row in inactive_acc:
+            ko = pattern_ko.get(
+                row["pattern"], _PATTERN_KO.get(row["pattern"], row["pattern"])
+            )
+            rate = f"{row['accuracy']:.0f}%" if row["total"] > 0 else "N/A"
+            lines.append(
+                f"{ko[:6]:<6} {row['total']:>4}"
+                f" {row['hit']:>4} {rate:>5} {'관찰':>4}"
             )
         lines.append("```")
         lines.append("_활성화 기준: 적중률 50%+_\n")
