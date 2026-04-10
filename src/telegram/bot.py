@@ -11,6 +11,24 @@ import httpx
 logger = logging.getLogger(__name__)
 
 TELEGRAM_API = "https://api.telegram.org"
+_MAX_MSG_LEN = 4096
+
+
+def _split_text(text: str, limit: int) -> list[str]:
+    """텍스트를 줄 단위로 분할하여 limit 이내 청크 리스트 반환."""
+    chunks: list[str] = []
+    current = ""
+    for line in text.split("\n"):
+        candidate = current + ("\n" if current else "") + line
+        if len(candidate) > limit:
+            if current:
+                chunks.append(current)
+            current = line[:limit]  # 단일 라인이 limit 초과 시 잘라냄
+        else:
+            current = candidate
+    if current:
+        chunks.append(current)
+    return chunks or [text[:limit]]
 
 
 async def send_message(
@@ -21,7 +39,16 @@ async def send_message(
     parse_mode: str = "Markdown",
     reply_markup: dict[str, Any] | None = None,
 ) -> bool:
-    """텔레그램 메시지 전송. 성공 시 True."""
+    """텔레그램 메시지 전송. 4096자 초과 시 자동 분할. 성공 시 True."""
+    if len(text) > _MAX_MSG_LEN:
+        # 줄 단위로 분할하여 순차 전송
+        chunks = _split_text(text, _MAX_MSG_LEN)
+        ok = True
+        for chunk in chunks:
+            if not await send_message(token, chat_id, chunk, parse_mode=parse_mode):
+                ok = False
+        return ok
+
     url = f"{TELEGRAM_API}/bot{token}/sendMessage"
     payload: dict[str, Any] = {
         "chat_id": chat_id,

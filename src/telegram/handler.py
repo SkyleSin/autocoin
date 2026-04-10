@@ -452,8 +452,9 @@ async def _cmd_report_detail(
     try:
         from services.report_service import generate_detail_report
         async with sf() as session:
-            report_text = await generate_detail_report(session)
-        await send_message(token, chat_id, report_text)
+            report_pages = await generate_detail_report(session)
+        for page in report_pages:
+            await send_message(token, chat_id, page)
     except Exception:
         logger.exception("상세 리포트 생성 실패")
         await send_message(token, chat_id, "❌ 상세 리포트 생성 중 오류가 발생했습니다.")

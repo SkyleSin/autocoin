@@ -183,10 +183,17 @@ async def generate_report(
     return "\n".join(lines)
 
 
-async def generate_detail_report(session: AsyncSession) -> str:
-    """LLM 판단 상세 리포트 — 실현 수익률 + 판단 이력 테이블."""
+async def generate_detail_report(session: AsyncSession) -> list[str]:
+    """LLM 판단 상세 리포트 — 메시지 분할 반환.
+
+    Returns:
+        list[str]: 텔레그램 메시지 목록 (각 4096자 이내)
+    """
     now = datetime.now(UTC)
     kst_now = now + timedelta(hours=9)
+    messages: list[str] = []
+
+    # ── 메시지 1: 요약 (실현 수익률 + 적중률 + 통계) ──
     lines = [f"🔍 *상세 리포트* ({kst_now:%m/%d %H:%M} KST)\n"]
 
     # ── 1. 실현 수익률 (매매 기록 기반) ──
@@ -235,19 +242,38 @@ async def generate_detail_report(session: AsyncSession) -> str:
     else:
         lines.append("💰 *실현 수익률*: 매매 기록 없음\n")
 
-    # ── 2. 최근 LLM 판단 이력 (테이블) ──
+    # ── 2. 최근 LLM 판단 이력 (카드형) ──
+    _SR_KO = {
+        "SUPPORT_BOUNCE": "지지 반등",
+        "SUPPORT_BREAK": "지지 이탈",
+        "RESISTANCE_BREAK": "저항 돌파",
+        "RESISTANCE_REJECT": "저항 저항",
+    }
+
     recent_llm = (await session.execute(text("""
         SELECT
             to_char(s.created_at AT TIME ZONE 'Asia/Seoul', 'MM/DD HH24:MI') as kst,
             REPLACE(s.market, 'KRW-', '') as coin,
             COALESCE(s.indicators->'patterns'->'patterns'->0->>'name_ko', '-') as pattern,
+            COALESCE(
+                s.indicators->'patterns'->'patterns'->0->>'confidence', ''
+            ) as pat_conf,
             s.signal_type as decision,
             s.confidence as conf,
             sp.signal_price,
             fp.future_price,
             s.indicators->>'rsi_14' as rsi,
             s.indicators->>'macd_histogram' as macd_h,
-            s.indicators->'support_resistance'->>'signal' as sr_sig
+            s.indicators->'support_resistance'->>'signal' as sr_sig,
+            s.indicators->'support_resistance'->>'nearest_support' as sup,
+            s.indicators->'support_resistance'->>'nearest_resistance' as res,
+            s.indicators->>'bb_upper' as bb_upper,
+            s.indicators->>'bb_lower' as bb_lower,
+            s.indicators->'higher_trend'->>'direction' as trend_dir,
+            s.indicators->'higher_trend'->>'timeframe' as trend_tf,
+            s.indicators->>'volume_ratio' as vol_ratio,
+            s.source as llm_source,
+            COALESCE(s.indicators->>'llm_reason', '') as llm_reason
         FROM signals s
         LEFT JOIN LATERAL (
             SELECT c.close as signal_price FROM candles c
@@ -265,43 +291,142 @@ async def generate_detail_report(session: AsyncSession) -> str:
         LIMIT 20
     """))).fetchall()
 
+    # 카드 생성
+    cards: list[str] = []
     if recent_llm:
-        lines.append("📋 *최근 LLM 판단* (20건)")
-        lines.append("```")
-        lines.append(f"{'시간':>11} {'코인':<4} {'패턴':<5} {'판단':<4} {'RSI':>4} {'4h후':>6} {'결과':>2}")
-        lines.append("-" * 42)
-        for row in reversed(recent_llm):
-            kst, coin, pattern, decision, conf, sig_price, fut_price, rsi_raw, macd_h, sr_sig = row
-            pat_short = (pattern or "-")[:5]
-            rsi_str = f"{float(rsi_raw):.0f}" if rsi_raw else "-"
+        for idx, row in enumerate(reversed(recent_llm), 1):
+            (
+                kst, coin, pattern, pat_conf, decision, conf,
+                sig_price, fut_price, rsi_raw, macd_h,
+                sr_sig, sup, res, bb_upper, bb_lower,
+                trend_dir, trend_tf, vol_ratio,
+                llm_source, llm_reason,
+            ) = row
 
-            if decision == "HOLD":
-                # HOLD: 4h 후 변동폭이 작으면 적중
-                if fut_price and sig_price and float(sig_price) > 0:
-                    chg = (float(fut_price) - float(sig_price)) / float(sig_price) * 100
-                    chg_str = f"{chg:+.1f}%"
-                    mark = "O" if abs(chg) < 2.0 else "X"
-                else:
-                    chg_str = " 대기"
-                    mark = "-"
-            elif fut_price and sig_price and float(sig_price) > 0:
-                chg = (float(fut_price) - float(sig_price)) / float(sig_price) * 100
-                chg_str = f"{chg:+.1f}%"
-                if decision == "BUY":
-                    mark = "O" if chg > 0 else "X"
-                else:
-                    mark = "O" if chg < 0 else "X"
+            # 판단 이모지
+            if decision == "BUY":
+                d_emoji = "🟢"
+            elif decision == "SELL":
+                d_emoji = "🔴"
             else:
-                chg_str = " 대기"
-                mark = "-"
+                d_emoji = "⏸"
 
-            lines.append(
-                f"{kst:>11} {coin:<4} {pat_short:<5} {decision:<4}"
-                f" {rsi_str:>4} {chg_str:>6} {mark:>2}"
-            )
-        lines.append("```")
-        lines.append("_결과: O=적중 X=실패 -=대기 (HOLD: 4h 내 2% 이내=O)_")
-        lines.append("_4h 후 변동은 참고용. 실현 수익률이 실제 성과._\n")
+            # LLM 소스 라벨
+            src = "DeepSeek R1" if llm_source == "deepseek" else "Ollama"
+
+            # 4h 후 결과
+            if fut_price and sig_price and float(sig_price) > 0:
+                chg = (float(fut_price) - float(sig_price)) / float(sig_price) * 100
+                if decision == "HOLD":
+                    mark = "✅" if abs(chg) < 2.0 else "❌"
+                elif decision == "BUY":
+                    mark = "✅" if chg > 0 else "❌"
+                else:
+                    mark = "✅" if chg < 0 else "❌"
+                result_str = f"{chg:+.1f}% {mark}"
+            else:
+                result_str = "⏳ 대기"
+
+            # 지표 라인
+            indicators_parts = []
+            if rsi_raw:
+                indicators_parts.append(f"RSI `{float(rsi_raw):.0f}`")
+            if macd_h:
+                indicators_parts.append(f"MACD `{float(macd_h):+.0f}`")
+            if vol_ratio:
+                vr = float(vol_ratio)
+                if vr >= 1.5:
+                    indicators_parts.append(f"거래량 `{vr:.1f}x` 🔥")
+                else:
+                    indicators_parts.append(f"거래량 `{vr:.1f}x`")
+            ind_line = " | ".join(indicators_parts) if indicators_parts else ""
+
+            # S/R 라인
+            sr_parts = []
+            if sr_sig and sr_sig != "NONE":
+                sr_parts.append(_SR_KO.get(sr_sig, sr_sig))
+            if sup:
+                sr_parts.append(f"지지 `{float(sup):,.0f}`")
+            if res:
+                sr_parts.append(f"저항 `{float(res):,.0f}`")
+            sr_line = " | ".join(sr_parts) if sr_parts else ""
+
+            # BB 위치
+            bb_line = ""
+            if bb_upper and bb_lower and sig_price:
+                sp_f = float(sig_price)
+                bbu = float(bb_upper)
+                bbl = float(bb_lower)
+                if sp_f >= bbu:
+                    bb_line = "BB 상단 이탈"
+                elif sp_f <= bbl:
+                    bb_line = "BB 하단 이탈"
+
+            # 패턴 라인
+            pat_line = ""
+            if pattern and pattern != "-":
+                pat_line = f"패턴: {pattern}"
+                if pat_conf:
+                    pat_line += f" ({pat_conf}%)"
+
+            # 추세 라인
+            trend_line = ""
+            if trend_dir:
+                t_emoji = {"UP": "📈", "DOWN": "📉"}.get(trend_dir, "➡️")
+                tf_label = trend_tf or ""
+                trend_line = f"추세: {t_emoji} {trend_dir} ({tf_label})"
+
+            # LLM 이유 (80자 제한)
+            reason_line = ""
+            if llm_reason:
+                r = llm_reason[:80]
+                if len(llm_reason) > 80:
+                    r += "…"
+                reason_line = f"💬 {r}"
+
+            # 카드 조립
+            card_parts = [
+                f"━━━ {idx}/{len(recent_llm)} ━━━",
+                f"{d_emoji} *{decision} {coin}* ({conf:.0%}) [{src}]",
+                f"{kst} | {ind_line}" if ind_line else kst,
+            ]
+            if sr_line:
+                card_parts.append(f"S/R: {sr_line}")
+            if pat_line:
+                card_parts.append(f"📐 {pat_line}")
+            if trend_line:
+                card_parts.append(trend_line)
+            if bb_line:
+                card_parts.append(f"📊 {bb_line}")
+            if reason_line:
+                card_parts.append(reason_line)
+            card_parts.append(f"→ 4h후: {result_str}")
+
+            cards.append("\n".join(card_parts))
+
+    # 카드들을 4096자 이내로 분할하여 메시지 생성
+    if cards:
+        card_header = f"📋 *최근 LLM 판단* ({len(cards)}건)\n"
+        card_footer = "\n_결과: ✅적중 ❌실패 ⏳대기 (HOLD: 4h 내 2% 이내=✅)_"
+
+        current_msg = card_header
+        for card in cards:
+            candidate = current_msg + "\n" + card
+            # 4096 - footer 여유분
+            if len(candidate) + len(card_footer) + 10 > 4096:
+                messages.append(current_msg.rstrip())
+                current_msg = card
+            else:
+                current_msg = candidate
+        current_msg += card_footer
+        messages.append(current_msg.rstrip())
+
+    # 요약 메시지에 LLM 판단 카드 대신 간략 통계만
+    lines.append(
+        f"📋 *LLM 판단*: {len(cards)}건"
+        + (" (카드 상세는 다음 메시지)" if cards else " (기록 없음)")
+    )
+    lines.append("")
 
     # ── 3. 패턴별 적중률 (테이블 기반 집계) ──
     pattern_accuracy = (await session.execute(text("""
@@ -462,6 +587,8 @@ async def generate_detail_report(session: AsyncSession) -> str:
     except Exception:
         pass
 
-    return "\n".join(lines)
+    # 요약 메시지를 맨 앞에, 카드 메시지들을 뒤에 배치
+    summary = "\n".join(lines)
+    return [summary] + messages
 
 
