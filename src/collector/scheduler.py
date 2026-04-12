@@ -1,17 +1,18 @@
-"""캔들 수집 스케줄러 — 추적 자산에 대해 주기적으로 collect_candles Job 생성."""
+"""캔들 수집 유틸 — 추적 자산 조회 및 collect_candles Job 생성.
+
+스케줄 루프는 unified_scheduler.py에서 관리.
+"""
 
 from __future__ import annotations
 
-import asyncio
 import logging
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.job import Job
 from models.job_status import JobStatus
 from models.tracked_asset import TrackedAsset
-from utils.config import Settings
 
 logger = logging.getLogger(__name__)
 
@@ -58,60 +59,3 @@ async def _create_candle_jobs(
     return created
 
 
-async def candle_scheduler(
-    session_factory: async_sessionmaker[AsyncSession],
-    settings: Settings,
-) -> None:
-    """주기적으로 활성 마켓의 캔들 수집 Job을 생성하는 무한 루프.
-
-    수집 주기는 `AUTOCOIN_CANDLE_INTERVAL_SEC` (기본 60초 = 1분봉).
-    각 사이클마다 최근 `AUTOCOIN_CANDLE_COUNT`개 캔들을 요청한다.
-    """
-    interval = settings.candle_interval_sec
-    unit = settings.candle_unit
-    count = settings.candle_count
-
-    logger.info(
-        "candle_scheduler: started (interval=%.1fs, unit=%dm, count=%d)",
-        interval,
-        unit,
-        count,
-    )
-
-    try:
-        while True:
-            try:
-                async with session_factory() as session:
-                    markets = await _active_markets(session)
-                    if not markets:
-                        logger.debug("candle_scheduler: no active markets, skip")
-                    else:
-                        created = await _create_candle_jobs(session, markets, unit, count)
-                        logger.info(
-                            "candle_scheduler: created %d collect_candles jobs for %d markets",
-                            created,
-                            len(markets),
-                        )
-                        # 참조 타임프레임 수집 (추세 확인용, 분석 체이닝 안 함)
-                        ref_tf_str = settings.candle_ref_timeframes
-                        if ref_tf_str.strip():
-                            for tf_label in ref_tf_str.split(","):
-                                tf_label = tf_label.strip()
-                                ref_unit = _LABEL_TO_UNIT.get(tf_label)
-                                if ref_unit and ref_unit != unit:
-                                    ref_created = await _create_candle_jobs(
-                                        session, markets, ref_unit, count,
-                                        ref_only=True,
-                                    )
-                                    logger.info(
-                                        "candle_scheduler: created %d ref jobs (%s)",
-                                        ref_created, tf_label,
-                                    )
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.exception("candle_scheduler: error creating jobs")
-
-            await asyncio.sleep(interval)
-    finally:
-        logger.info("candle_scheduler stopped")

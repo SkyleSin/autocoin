@@ -1,20 +1,18 @@
-"""일봉 수집 스케줄러 — 매일 KST 00:05에 전일 일봉 수집 + 초기 백필.
+"""일봉 수집 유틸 — 백필, 일봉 수집, 패턴 캐시 동기화, Job 정리.
 
-candles 테이블에 timeframe='1d'로 저장.
-패턴 분석 윈도우(200일)를 위해 최초 기동 시 200일치 백필.
+스케줄 루프는 unified_scheduler.py에서 관리.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import time as _time
 from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import delete, func, select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.candle import Candle
 from models.job import Job
@@ -211,79 +209,3 @@ async def _cleanup_old_jobs(session: AsyncSession) -> dict[str, int]:
     return counts
 
 
-def _seconds_until_kst_target(hour: int, minute: int) -> float:
-    """다음 KST 지정 시각까지 남은 초."""
-    now_kst = datetime.now(KST)
-    target = now_kst.replace(hour=hour, minute=minute, second=0, microsecond=0)
-    if now_kst >= target:
-        target += timedelta(days=1)
-    return (target - now_kst).total_seconds()
-
-
-async def daily_candle_scheduler(
-    session_factory: async_sessionmaker[AsyncSession],
-    settings: Settings,
-) -> None:
-    """일봉 수집 스케줄러: 최초 백필 + 매일 KST 00:05 수집 + 적중률 판정 + Job 정리."""
-    logger.info("daily_candle_scheduler: started")
-
-    try:
-        # 1) 초기: DB → 캐시 동기화 + 백필
-        async with session_factory() as session:
-            await _sync_pattern_cache(session)
-            markets = await _active_markets(session)
-            for market in markets:
-                try:
-                    await _backfill_market(session, settings, market)
-                except Exception:
-                    logger.exception("daily backfill failed: %s", market)
-
-        # 2) 매일 KST 00:05 루프
-        while True:
-            wait = _seconds_until_kst_target(0, 5)
-            logger.info("daily_candle_scheduler: next run in %.0f seconds", wait)
-            await asyncio.sleep(wait)
-
-            try:
-                async with session_factory() as session:
-                    markets = await _active_markets(session)
-                    if markets:
-                        total = await _collect_latest_daily(session, settings, markets)
-                        logger.info(
-                            "daily_candle_scheduler: collected %d daily candles for %d markets",
-                            total, len(markets),
-                        )
-                    # 적중률 판정 (7일 전 시그널)
-                    try:
-                        from services.pattern_service import evaluate_pending_signals
-                        pat_markets = [
-                            m.strip()
-                            for m in settings.pattern_markets.split(",")
-                            if m.strip()
-                        ]
-                        eval_result = await evaluate_pending_signals(
-                            session, pattern_markets=pat_markets,
-                        )
-                        if eval_result["evaluated"] > 0:
-                            logger.info(
-                                "daily pattern eval: %d evaluated, %d hit",
-                                eval_result["evaluated"], eval_result["hit"],
-                            )
-                            await _sync_pattern_cache(session)
-                    except Exception:
-                        logger.exception("daily pattern evaluation failed")
-
-                    # Job 정리
-                    await _cleanup_old_jobs(session)
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.exception("daily_candle_scheduler: error")
-
-            # 중복 실행 방지 (최소 23시간 대기)
-            await asyncio.sleep(60)
-
-    except asyncio.CancelledError:
-        pass
-    finally:
-        logger.info("daily_candle_scheduler stopped")

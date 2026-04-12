@@ -15,12 +15,6 @@ from fastapi import FastAPI
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from collector.daily_scheduler import daily_candle_scheduler
-from collector.scheduler import candle_scheduler
-from models.pattern_accuracy import PatternAccuracy
-from models.pattern_config import PatternConfig
-from models.pattern_evaluation import PatternEvaluation
-from models.shadow_trade import ShadowPortfolio, ShadowTrade
 from job_runner.poller import SHUTDOWN_QUEUE_ITEM, JobQueueItem, poller
 from job_runner.rate_limit import AsyncSlidingWindowRateLimiter
 from job_runner.worker import worker as job_worker
@@ -29,6 +23,10 @@ from models.app_config import AppConfig
 from models.candle import Candle
 from models.job import Job
 from models.job_status import JobStatus
+from models.pattern_accuracy import PatternAccuracy
+from models.pattern_config import PatternConfig
+from models.pattern_evaluation import PatternEvaluation
+from models.shadow_trade import ShadowPortfolio, ShadowTrade
 from models.signal import Signal
 from models.tracked_asset import TrackedAsset
 from models.trade import Trade
@@ -36,6 +34,7 @@ from routers.jobs import router as jobs_router
 from services.config_service import load_risk_settings
 from telegram.bot import send_message
 from telegram.poller import telegram_poller
+from unified_scheduler import unified_scheduler
 from utils.config import Settings
 from utils.logging_setup import setup_logging
 
@@ -136,24 +135,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
             for i in range(settings.job_worker_count)
         ]
-        candle_scheduler_task = asyncio.create_task(
-            candle_scheduler(session_factory, settings),
-            name="candle-scheduler",
+        scheduler_task = asyncio.create_task(
+            unified_scheduler(session_factory, settings),
+            name="unified-scheduler",
         )
         telegram_poller_task = asyncio.create_task(
             telegram_poller(session_factory, settings),
             name="telegram-poller",
-        )
-
-        from services.report_scheduler import report_scheduler
-        report_scheduler_task = asyncio.create_task(
-            report_scheduler(session_factory, settings),
-            name="report-scheduler",
-        )
-
-        daily_candle_task = asyncio.create_task(
-            daily_candle_scheduler(session_factory, settings),
-            name="daily-candle-scheduler",
         )
 
         from safety.monitor import safety_monitor
@@ -165,10 +153,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.job_queue = job_queue
         app.state.job_poller_task = poller_task
         app.state.job_worker_tasks = worker_tasks
-        app.state.candle_scheduler_task = candle_scheduler_task
+        app.state.scheduler_task = scheduler_task
         app.state.telegram_poller_task = telegram_poller_task
-        app.state.report_scheduler_task = report_scheduler_task
-        app.state.daily_candle_task = daily_candle_task
         app.state.safety_monitor_task = safety_monitor_task
         logger.info(
             "job runner: poller=1 workers=%s bithumb_max_rps=%s "
@@ -191,21 +177,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         safety_monitor_task.cancel()
         await asyncio.gather(safety_monitor_task, return_exceptions=True)
 
-        logger.info("lifespan: stop report_scheduler")
-        report_scheduler_task.cancel()
-        await asyncio.gather(report_scheduler_task, return_exceptions=True)
+        logger.info("lifespan: stop unified_scheduler")
+        scheduler_task.cancel()
+        await asyncio.gather(scheduler_task, return_exceptions=True)
 
         logger.info("lifespan: stop telegram_poller")
         telegram_poller_task.cancel()
         await asyncio.gather(telegram_poller_task, return_exceptions=True)
-
-        logger.info("lifespan: stop daily_candle_scheduler")
-        daily_candle_task.cancel()
-        await asyncio.gather(daily_candle_task, return_exceptions=True)
-
-        logger.info("lifespan: stop candle_scheduler")
-        candle_scheduler_task.cancel()
-        await asyncio.gather(candle_scheduler_task, return_exceptions=True)
 
         logger.info("lifespan: stop poller")
         poller_task.cancel()
