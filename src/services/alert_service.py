@@ -13,6 +13,42 @@ from models.active_alert import ActiveAlert
 
 logger = logging.getLogger(__name__)
 
+# 패스 해제 기준: confidence 변화량이 이 값 이상이면 시장 상황 변경으로 간주
+_PASS_CONFIDENCE_THRESHOLD = 0.15
+
+
+def _pass_fingerprint(indicators: dict | None, confidence: float) -> str:
+    """패스 비교용 핑거프린트 생성. S/R 시그널 + confidence 기반."""
+    sr = "NONE"
+    if indicators:
+        sr_data = indicators.get("support_resistance")
+        if isinstance(sr_data, dict):
+            sr = sr_data.get("signal", "NONE")
+    return json.dumps({"sr": sr, "conf": round(confidence, 2)}, sort_keys=True)
+
+
+def _should_clear_pass(old_fp_str: str | None, new_fp_str: str) -> bool:
+    """패스 상태를 해제해야 하는지 판단.
+
+    해제 조건:
+    - S/R 시그널 변경 (지지 반등→저항 돌파 등)
+    - confidence 유의미 상승 (>=0.15)
+    """
+    if not old_fp_str:
+        return True
+    try:
+        old = json.loads(old_fp_str)
+        new = json.loads(new_fp_str)
+    except (json.JSONDecodeError, TypeError):
+        return True  # 파싱 실패 → 안전하게 해제
+    if not isinstance(old, dict) or not isinstance(new, dict):
+        return True  # old format(list 등) → 안전하게 해제
+    if old.get("sr") != new.get("sr"):
+        return True
+    old_conf = old.get("conf", 0.0)
+    new_conf = new.get("conf", 0.0)
+    return (new_conf - old_conf) >= _PASS_CONFIDENCE_THRESHOLD
+
 
 class AlertAction:
     """알림 판단 결과."""
@@ -38,7 +74,7 @@ async def mark_passed(
     now = datetime.now(UTC)
     for alert in results:
         alert.passed_at = now
-        alert.passed_reasons = alert.reasons
+        alert.passed_reasons = _pass_fingerprint(alert.indicators, alert.confidence)
         logger.info("alert passed: %s %s", market, alert.timeframe)
     return True
 
@@ -170,21 +206,20 @@ async def check_alert(
         )
         return AlertAction.CHANGED
 
-    # 동일 시그널 — 패스 상태 확인
+    # 동일 시그널 — 패스 상태 확인 (S/R 시그널 + confidence 기반)
     if existing.passed_at is not None:
-        new_reasons = json.dumps(reasons, ensure_ascii=False)
-        if existing.passed_reasons == new_reasons:
-            # 동일 패턴 유지 → 패스 유지
+        new_fp = _pass_fingerprint(indicators, confidence)
+        if not _should_clear_pass(existing.passed_reasons, new_fp):
             return AlertAction.PASSED
-        # 패턴 변경 → 패스 해제, 새 알림
+        # S/R 변경 또는 confidence 유의미 상승 → 패스 해제, 새 알림
         existing.passed_at = None
         existing.passed_reasons = None
         existing.confidence = confidence
-        existing.reasons = new_reasons
+        existing.reasons = json.dumps(reasons, ensure_ascii=False)
         existing.indicators = indicators
         existing.last_alerted_at = now
         logger.info(
-            "alert pass cleared (pattern changed): %s %s %s",
+            "alert pass cleared (sr/conf changed): %s %s %s",
             market, timeframe, signal_type,
         )
         return AlertAction.CHANGED

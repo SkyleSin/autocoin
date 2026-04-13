@@ -44,7 +44,7 @@ class ActiveAlert(Base):
     )
     passed_reasons: Mapped[str | None] = mapped_column(
         Text, nullable=True, default=None,
-        comment="패스 당시 reasons (JSON). 패턴 변경 감지에 사용",
+        comment="패스 당시 S/R 시그널+confidence 핑거프린트 (JSON). 시장 상황 변경 감지에 사용",
     )
     acted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, default=None,
