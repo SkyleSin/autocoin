@@ -109,6 +109,7 @@ class Settings(BaseSettings):
     # 런타임 설정 기본값 (DB에 저장된 값이 있으면 서버 시작 시 덮어씀)
     alert_remind_interval_sec: float = 14400.0  # 4시간 (재알림 + CHANGED 쿨다운)
     risk_max_per_trade_pct: float = 15.0
+    risk_max_per_coin_pct: float = 25.0  # 코인당 최대 투자 비율 (총 자본 대비 %)
     risk_max_daily_trades: int = 30
     risk_min_krw_reserve: float = 100_000.0
 
@@ -141,12 +142,12 @@ class Settings(BaseSettings):
     )
 
     candle_interval_sec: float = Field(
-        default=60.0,
-        description="캔들 수집 주기(초). 1분봉 기준 60.",
+        default=300.0,
+        description="캔들 수집 주기(초). 5분봉 기준 300.",
         validation_alias="AUTOCOIN_CANDLE_INTERVAL_SEC",
     )
     candle_unit: int = Field(
-        default=1,
+        default=5,
         description="분봉 단위 (1, 3, 5, 10, 15, 30, 60, 240).",
         validation_alias="AUTOCOIN_CANDLE_UNIT",
     )

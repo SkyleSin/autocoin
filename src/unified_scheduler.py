@@ -10,6 +10,7 @@ import asyncio
 import logging
 from datetime import UTC, datetime, timedelta, timezone
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from utils.config import Settings
@@ -100,6 +101,7 @@ async def _tick_daily(
         _cleanup_old_jobs,
         _collect_latest_daily,
         _sync_pattern_cache,
+        _update_indicator_weights,
     )
     from services.pattern_service import evaluate_pending_signals
 
@@ -130,6 +132,13 @@ async def _tick_daily(
                 await _sync_pattern_cache(session)
         except Exception:
             logger.exception("scheduler/daily: pattern evaluation failed")
+
+        # 지표 가중치 적응형 갱신
+        try:
+            weight_result = await _update_indicator_weights(session)
+            logger.info("scheduler/daily: indicator weights %s", weight_result)
+        except Exception:
+            logger.exception("scheduler/daily: indicator weight update failed")
 
         await _cleanup_old_jobs(session)
 
@@ -169,9 +178,32 @@ async def _run_startup(
         _backfill_market,
         _sync_pattern_cache,
     )
+    from models.indicator_weight import IndicatorWeight  # noqa: F811
+
+    async def _sync_indicator_weights(sess: AsyncSession) -> None:
+        """DB indicator_weights → 메모리 캐시 동기화."""
+        from analysis.signal_weights import Weight, set_weights_cache
+
+        rows = (await sess.execute(
+            select(IndicatorWeight)
+        )).scalars().all()
+        if not rows:
+            return
+
+        by_tf: dict[str, dict[str, Weight]] = {}
+        for r in rows:
+            if r.timeframe not in by_tf:
+                by_tf[r.timeframe] = {}
+            by_tf[r.timeframe][r.name] = Weight(
+                r.name, r.direction, r.accuracy, r.is_active,
+            )
+        for tf, ws in by_tf.items():
+            set_weights_cache(tf, ws)
+        logger.info("indicator weights cache synced: %d records", len(rows))
 
     async with session_factory() as session:
         await _sync_pattern_cache(session)
+        await _sync_indicator_weights(session)
         markets = await _active_markets(session)
         for market in markets:
             try:

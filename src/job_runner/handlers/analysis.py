@@ -30,10 +30,107 @@ from utils.config import Settings
 logger = logging.getLogger(__name__)
 
 
+async def _check_mtf_direction(
+    session: AsyncSession,
+    market: str,
+    signal_type: str,
+) -> dict[str, Any]:
+    """15분봉/1시간봉의 시그널 방향을 확인하여 필터링 정보 반환.
+
+    Returns:
+        conflict: True면 15분봉이 반대 방향 → HOLD
+        1h_agree: True면 1시간봉이 같은 방향 → 부스트
+        1h_oppose: True면 1시간봉이 반대 방향 → 감쇠
+    """
+    result: dict[str, Any] = {
+        "conflict": False, "1h_agree": False, "1h_oppose": False, "detail": "",
+    }
+
+    for tf, tf_label in [("15m", "15분봉"), ("1h", "1시간봉")]:
+        rows = await session.execute(
+            select(Candle)
+            .where(Candle.market == market, Candle.timeframe == tf)
+            .order_by(Candle.open_at.desc())
+            .limit(200)
+        )
+        candles = list(reversed(rows.scalars().all()))
+        if len(candles) < 50:
+            continue
+
+        closes = pd.Series([float(c.close) for c in candles])
+        volumes = pd.Series([float(c.volume) for c in candles])
+        snap = compute_all(closes, volumes)
+        if snap is None:
+            continue
+
+        close_price = float(candles[-1].close)
+        tf_signal = evaluate(snap, close_price, timeframe=tf)
+
+        if tf_signal.signal_type == "HOLD":
+            continue
+
+        if tf == "15m":
+            if tf_signal.signal_type != signal_type:
+                result["conflict"] = True
+                result["detail"] = (
+                    f"{tf_label} {tf_signal.signal_type} "
+                    f"({tf_signal.confidence:.1%}) vs 5분봉 {signal_type}"
+                )
+                return result
+        elif tf == "1h":
+            if tf_signal.signal_type == signal_type:
+                result["1h_agree"] = True
+            else:
+                result["1h_oppose"] = True
+
+    return result
+
+
+async def _check_bear_market(session: AsyncSession) -> bool:
+    """BTC 일봉 종가 < SMA50이면 하락장으로 판단."""
+    rows = await session.execute(
+        select(Candle)
+        .where(Candle.market == "KRW-BTC", Candle.timeframe == "1d")
+        .order_by(Candle.open_at.desc())
+        .limit(60)
+    )
+    candles = list(reversed(rows.scalars().all()))
+    if len(candles) < 50:
+        return False
+
+    closes = pd.Series([float(c.close) for c in candles])
+    sma50 = closes.rolling(50).mean()
+    if pd.isna(sma50.iloc[-1]):
+        return False
+
+    is_bear = float(closes.iloc[-1]) < float(sma50.iloc[-1])
+    if is_bear:
+        logger.info(
+            "bear_market: BTC %.0f < SMA50 %.0f",
+            float(closes.iloc[-1]), float(sma50.iloc[-1]),
+        )
+    return is_bear
+
+
+async def _check_position_limit(
+    session: AsyncSession,
+    market: str,
+    settings: Settings,
+) -> bool:
+    """코인당 포지션 한도 초과 여부 확인. True면 매수 차단."""
+    from models.active_alert import ActiveAlert
+
+    # 간단한 방법: active_alerts에서 해당 코인의 BUY 알림 수로 추정
+    # 실제로는 보유량을 확인해야 하지만, 시그널 단계에서는 근사치 사용
+    # 정확한 한도 체크는 check_balance 핸들러에서 수행
+    return False  # 실제 한도 체크는 매매 실행 단계(check_balance)에서 수행
+
+
 async def _run_technical_analysis(
     session: AsyncSession,
     market: str,
     timeframe: str,
+    settings: Settings | None = None,
     candle_limit: int = 200,
     ref_timeframes: list[str] | None = None,
     pattern_markets: list[str] | None = None,
@@ -70,7 +167,7 @@ async def _run_technical_analysis(
 
     close_price = float(candles[-1].close)
     signal_result = evaluate(
-        snap, close_price, pattern_analysis=pat, sr_analysis=sr,
+        snap, close_price, timeframe=timeframe, sr_analysis=sr,
     )
 
     combined_indicators = {
@@ -79,9 +176,10 @@ async def _run_technical_analysis(
         "support_resistance": sr.to_dict(),
     }
 
-    # 상위 타임프레임 추세 확인 (BUY/SELL 시)
+    # 멀티TF 필터: 15분봉/1시간봉 방향 확인
     ref_tfs = ref_timeframes or []
     if signal_result.signal_type in ("BUY", "SELL") and ref_tfs:
+        # 상위 추세 (모멘텀 + 가격 위치 기반)
         trend = await get_higher_trend(session, market, ref_tfs)
         combined_indicators["higher_trend"] = {
             "direction": trend.direction,
@@ -90,21 +188,53 @@ async def _run_technical_analysis(
             "sma_50": trend.sma_50,
             "description": trend.description,
         }
-        # 상위 추세 하락 중 매수 → HOLD로 전환
-        if signal_result.signal_type == "BUY" and trend.direction == "DOWN":
+
+        # 15분봉 방향 필터: 반대 방향이면 HOLD
+        mtf_filter = await _check_mtf_direction(
+            session, market, signal_result.signal_type,
+        )
+        combined_indicators["mtf_filter"] = mtf_filter
+
+        if mtf_filter.get("conflict"):
             signal_result = SignalResult(
                 "HOLD", 0.0,
                 signal_result.reasons
-                + [f"⚠️ 상위 추세 하락 ({trend.description}) — 매수 보류"],
+                + [f"⚠️ 15분봉 반대 방향 ({mtf_filter['detail']}) — 보류"],
             )
-        # 상위 추세 상승 중 매도 → 신뢰도 50% 감쇠
-        elif signal_result.signal_type == "SELL" and trend.direction == "UP":
-            orig = signal_result.confidence
-            dampened = round(orig * 0.5, 2)
+        else:
+            # 1시간봉 동의 시 부스트, 반대 시 감쇠
+            if mtf_filter.get("1h_agree"):
+                boosted = min(signal_result.confidence * 1.1, 1.0)
+                signal_result = SignalResult(
+                    signal_result.signal_type, round(boosted, 4),
+                    signal_result.reasons
+                    + [f"✅ 1시간봉 동의 — 신뢰도 부스트 {signal_result.confidence:.1%}→{boosted:.1%}"],
+                )
+            elif mtf_filter.get("1h_oppose"):
+                dampened = signal_result.confidence * 0.85
+                signal_result = SignalResult(
+                    signal_result.signal_type, round(dampened, 4),
+                    signal_result.reasons
+                    + [f"⚠️ 1시간봉 반대 — 신뢰도 감쇠 {signal_result.confidence:.1%}→{dampened:.1%}"],
+                )
+
+            # 상위 추세 하락 중 매수 → HOLD
+            if signal_result.signal_type == "BUY" and trend.direction == "DOWN":
+                signal_result = SignalResult(
+                    "HOLD", 0.0,
+                    signal_result.reasons
+                    + [f"⚠️ 상위 추세 하락 ({trend.description}) — 매수 보류"],
+                )
+
+    # 하락장 필터: BTC 일봉 < SMA50이면 BUY 차단
+    if signal_result.signal_type == "BUY":
+        is_bear = await _check_bear_market(session)
+        if is_bear:
+            combined_indicators["bear_market"] = True
             signal_result = SignalResult(
-                "SELL", dampened,
+                "HOLD", 0.0,
                 signal_result.reasons
-                + [f"⚠️ 상위 추세 상승 ({trend.description}) — 매도 신뢰도 감쇠 {orig}→{dampened}"],
+                + ["🐻 하락장 (BTC < 일봉 SMA50) — 매수 차단"],
             )
 
     signal = Signal(
@@ -174,8 +304,8 @@ async def handle_analyze_technical(
         ref_timeframes = [tf.strip() for tf in ref_tf_str.split(",") if tf.strip()]
     pat_markets = [m.strip() for m in settings.pattern_markets.split(",") if m.strip()]
     result = await _run_technical_analysis(
-        session, market, timeframe, ref_timeframes=ref_timeframes,
-        pattern_markets=pat_markets,
+        session, market, timeframe, settings=settings,
+        ref_timeframes=ref_timeframes, pattern_markets=pat_markets,
     )
     job.response = result
     job.status = JobStatus.Complete.value

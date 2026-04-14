@@ -277,12 +277,12 @@ async def generate_detail_report(session: AsyncSession) -> list[str]:
         FROM signals s
         LEFT JOIN LATERAL (
             SELECT c.close as signal_price FROM candles c
-            WHERE c.market = s.market AND c.timeframe = '15m' AND c.open_at <= s.created_at
+            WHERE c.market = s.market AND c.timeframe IN ('5m','15m') AND c.open_at <= s.created_at
             ORDER BY c.open_at DESC LIMIT 1
         ) sp ON true
         LEFT JOIN LATERAL (
             SELECT c.close as future_price FROM candles c
-            WHERE c.market = s.market AND c.timeframe = '15m'
+            WHERE c.market = s.market AND c.timeframe IN ('5m','15m')
             AND c.open_at >= s.created_at + interval '4 hours'
             ORDER BY c.open_at ASC LIMIT 1
         ) fp ON true
@@ -444,12 +444,12 @@ async def generate_detail_report(session: AsyncSession) -> list[str]:
             FROM signals s
             LEFT JOIN LATERAL (
                 SELECT c.close as signal_price FROM candles c
-                WHERE c.market = s.market AND c.timeframe = '15m' AND c.open_at <= s.created_at
+                WHERE c.market = s.market AND c.timeframe IN ('5m','15m') AND c.open_at <= s.created_at
                 ORDER BY c.open_at DESC LIMIT 1
             ) sp ON true
             LEFT JOIN LATERAL (
                 SELECT c.close as future_price FROM candles c
-                WHERE c.market = s.market AND c.timeframe = '15m'
+                WHERE c.market = s.market AND c.timeframe IN ('5m','15m')
                 AND c.open_at >= s.created_at + interval '4 hours'
                 ORDER BY c.open_at ASC LIMIT 1
             ) fp ON true
@@ -520,12 +520,12 @@ async def generate_detail_report(session: AsyncSession) -> list[str]:
         FROM signals s
         LEFT JOIN LATERAL (
             SELECT c.close as signal_price FROM candles c
-            WHERE c.market = s.market AND c.timeframe = '15m' AND c.open_at <= s.created_at
+            WHERE c.market = s.market AND c.timeframe IN ('5m','15m') AND c.open_at <= s.created_at
             ORDER BY c.open_at DESC LIMIT 1
         ) sp ON true
         LEFT JOIN LATERAL (
             SELECT c.close as future_price FROM candles c
-            WHERE c.market = s.market AND c.timeframe = '15m'
+            WHERE c.market = s.market AND c.timeframe IN ('5m','15m')
             AND c.open_at >= s.created_at + interval '4 hours'
             ORDER BY c.open_at ASC LIMIT 1
         ) fp ON true

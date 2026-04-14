@@ -264,6 +264,27 @@ async def _chain_trade_from_balance(
     if indicators and isinstance(indicators.get("patterns"), dict):
         patterns = indicators["patterns"].get("patterns", [])
 
+    # 코인당 포지션 한도 체크 (매수 시)
+    if bithumb_side == "bid" and settings.risk_max_per_coin_pct > 0:
+        total_capital = krw_balance + sum(
+            float(a.get("balance", 0)) * float(a.get("avg_buy_price", 0))
+            for a in accounts
+            if a.get("currency") not in ("KRW", "") and float(a.get("balance", 0)) > 0
+        )
+        coin_value = coin_balance * price if coin_balance > 0 and price > 0 else 0
+        if total_capital > 0 and (coin_value / total_capital * 100) >= settings.risk_max_per_coin_pct:
+            logger.info(
+                "코인당 한도 초과: %s %.1f%% >= %.1f%%",
+                market, coin_value / total_capital * 100, settings.risk_max_per_coin_pct,
+            )
+            if token and chat_id:
+                await send_signal_alert(
+                    token, chat_id,
+                    f"⚠️ `{market}` 매수 차단 — 코인당 한도 "
+                    f"({coin_value/total_capital*100:.1f}% >= {settings.risk_max_per_coin_pct:.0f}%)",
+                )
+            return
+
     # 패턴 기반 포지션 사이징
     pos = None
     if bithumb_side == "bid":

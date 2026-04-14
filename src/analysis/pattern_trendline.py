@@ -8,7 +8,7 @@ from analysis.pattern_helpers import check_volume, slope_pct
 from analysis.pattern_utils import PatternMatch, Trendline
 
 # 타임프레임별 수평 판정 임계값 (봉당 가격변동률 %)
-_FLAT_THRESHOLDS = {"1d": 0.03, "4h": 0.02, "1h": 0.015, "15m": 0.01}
+_FLAT_THRESHOLDS = {"1d": 0.03, "4h": 0.02, "1h": 0.015, "15m": 0.01, "5m": 0.008}
 
 
 def _flat_threshold(timeframe: str) -> float:
@@ -21,7 +21,7 @@ def classify_trendline_patterns(
     closes: pd.Series,
     avg_price: float,
     volumes: pd.Series | None = None,
-    timeframe: str = "15m",
+    timeframe: str = "5m",
 ) -> list[PatternMatch]:
     """저항/지지 추세선 기울기 조합으로 패턴 분류 (점진적 수렴 검증)."""
     res_pct = slope_pct(res_line, avg_price)

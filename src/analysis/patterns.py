@@ -59,7 +59,7 @@ def _filter_conflicting(patterns: list[PatternMatch]) -> list[PatternMatch]:
 
 def analyze(
     highs: pd.Series, lows: pd.Series, closes: pd.Series,
-    order: int | None = None, *, timeframe: str = "15m",
+    order: int | None = None, *, timeframe: str = "5m",
     min_swing_pct_val: float = 2.0, volumes: pd.Series | None = None,
 ) -> PatternAnalysis:
     """OHLC 데이터에서 차트 패턴 탐지."""

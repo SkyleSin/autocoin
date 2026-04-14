@@ -34,3 +34,26 @@ class BithumbCandle(BithumbClientBase):
             msg = f"candles/minutes/{unit} 응답이 리스트가 아닙니다."
             raise TypeError(msg)
         return data
+
+    def get_days(
+        self,
+        market: str,
+        *,
+        count: int = 1,
+        to: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """일봉 캔들 조회.
+
+        Args:
+            market: 마켓 코드 (예: "KRW-BTC")
+            count: 캔들 개수 (최대 200)
+            to: 마지막 캔들 시각 (ISO 8601)
+        """
+        params: dict[str, Any] = {"market": market, "count": count}
+        if to is not None:
+            params["to"] = to
+        data = self.public_request("GET", "/v1/candles/days", params=params)
+        if not isinstance(data, list):
+            msg = "candles/days 응답이 리스트가 아닙니다."
+            raise TypeError(msg)
+        return data

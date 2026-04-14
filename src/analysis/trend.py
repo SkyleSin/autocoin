@@ -1,4 +1,8 @@
-"""상위 타임프레임 추세 판단 — 멀티 타임프레임 분석 필터."""
+"""상위 타임프레임 추세 판단 — 모멘텀 + 가격 위치 기반.
+
+SMA 20/50 교차는 백테스트에서 무의미(1~2%p 차이)했으므로,
+ROC(변화율) + 가격 위치 퍼센타일로 대체.
+"""
 
 from __future__ import annotations
 
@@ -9,12 +13,10 @@ import pandas as pd
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from analysis.indicators import sma
 from models.candle import Candle
 
 logger = logging.getLogger(__name__)
 
-# 타임프레임 라벨 → 분봉 단위 매핑
 _LABEL_TO_UNIT = {
     "1m": 1, "3m": 3, "5m": 5, "10m": 10,
     "15m": 15, "30m": 30, "1h": 60, "4h": 240,
@@ -26,10 +28,10 @@ class TrendResult:
     """상위 타임프레임 추세 판단 결과."""
 
     direction: str  # "UP", "DOWN", "NEUTRAL"
-    timeframe: str  # 판단에 사용한 타임프레임 (예: "4h")
+    timeframe: str
     sma_20: float | None
     sma_50: float | None
-    description: str  # 사람이 읽을 수 있는 설명
+    description: str
 
 
 async def get_higher_trend(
@@ -82,49 +84,72 @@ async def _analyze_single_tf(
         return None
 
     closes = pd.Series([float(c.close) for c in candles])
-    sma_20 = sma(closes, 20)
-    sma_50 = sma(closes, 50)
+    highs = pd.Series([float(c.high) for c in candles])
+    lows = pd.Series([float(c.low) for c in candles])
 
-    last_sma_20 = float(sma_20.iloc[-1])
-    last_sma_50 = float(sma_50.iloc[-1])
-
-    # SMA 20 기울기 (최근 3봉 평균 변화)
-    recent_sma20 = sma_20.iloc[-3:]
-    slope = (
-        (float(recent_sma20.iloc[-1]) - float(recent_sma20.iloc[0]))
-        / float(recent_sma20.iloc[0])
-        * 100
-    )
-
-    direction, desc = _classify_trend(
-        timeframe, last_sma_20, last_sma_50, slope,
+    direction, desc, sma20, sma50 = _classify_trend(
+        timeframe, closes, highs, lows,
     )
     logger.info("higher_trend: %s %s → %s", market, timeframe, direction)
 
     return TrendResult(
         direction=direction,
         timeframe=timeframe,
-        sma_20=round(last_sma_20, 4),
-        sma_50=round(last_sma_50, 4),
+        sma_20=sma20,
+        sma_50=sma50,
         description=desc,
     )
 
 
 def _classify_trend(
-    timeframe: str, sma20: float, sma50: float, slope: float,
-) -> tuple[str, str]:
-    """SMA 교차 + 기울기로 추세 방향 분류."""
-    if sma20 > sma50 and slope > 0:
-        return "UP", (
+    timeframe: str,
+    closes: pd.Series,
+    highs: pd.Series,
+    lows: pd.Series,
+) -> tuple[str, str, float | None, float | None]:
+    """모멘텀(ROC) + 가격 위치 퍼센타일로 추세 판단.
+
+    - 가격 위치: 최근 50봉 중 현재가 위치 (0~100)
+    - 모멘텀: ROC 10봉 (변화율)
+    - SMA 20/50은 참고값으로만 계산 (기존 호환)
+    """
+    # 가격 위치 퍼센타일
+    recent = closes.iloc[-50:]
+    high_50 = float(highs.iloc[-50:].max())
+    low_50 = float(lows.iloc[-50:].min())
+    price_range = high_50 - low_50
+    if price_range == 0:
+        position = 50.0
+    else:
+        position = (float(closes.iloc[-1]) - low_50) / price_range * 100
+
+    # ROC 10봉
+    if len(closes) >= 11 and float(closes.iloc[-11]) > 0:
+        roc = (float(closes.iloc[-1]) / float(closes.iloc[-11]) - 1) * 100
+    else:
+        roc = 0.0
+
+    # SMA (기존 호환용)
+    sma20 = float(recent.rolling(20).mean().iloc[-1]) if len(recent) >= 20 else None
+    sma50 = float(closes.iloc[-50:].rolling(50).mean().iloc[-1]) if len(closes) >= 50 else None
+
+    # 판단
+    if position > 70 and roc > 0.5:
+        desc = (
             f"{timeframe} 상승 추세 "
-            f"(SMA20 {sma20:,.0f} > SMA50 {sma50:,.0f}, 기울기 +{slope:.2f}%)"
+            f"(위치 {position:.0f}%, ROC {roc:+.2f}%)"
         )
-    if sma20 < sma50 and slope < 0:
-        return "DOWN", (
+        return "UP", desc, sma20, sma50
+
+    if position < 30 and roc < -0.5:
+        desc = (
             f"{timeframe} 하락 추세 "
-            f"(SMA20 {sma20:,.0f} < SMA50 {sma50:,.0f}, 기울기 {slope:.2f}%)"
+            f"(위치 {position:.0f}%, ROC {roc:+.2f}%)"
         )
-    return "NEUTRAL", (
+        return "DOWN", desc, sma20, sma50
+
+    desc = (
         f"{timeframe} 추세 불명확 "
-        f"(SMA20 {sma20:,.0f}, SMA50 {sma50:,.0f}, 기울기 {slope:.2f}%)"
+        f"(위치 {position:.0f}%, ROC {roc:+.2f}%)"
     )
+    return "NEUTRAL", desc, sma20, sma50
