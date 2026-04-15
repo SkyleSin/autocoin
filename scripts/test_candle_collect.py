@@ -15,16 +15,12 @@ from pathlib import Path
 # src를 PYTHONPATH에 추가
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from datetime import UTC, datetime
-from decimal import Decimal
 
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from models.base import Base
 from models.candle import Candle
-from models.job import Job
-from models.job_status import JobStatus
 from models.tracked_asset import TrackedAsset
 from utils.config import Settings
 
@@ -67,7 +63,6 @@ async def main() -> None:
 
     # 3) 빗썸 캔들 API 직접 호출 테스트
     print("\n=== 3. 빗썸 캔들 API 호출 테스트 ===")
-    from job_runner.workers import PublicRequester
 
     try:
         raw_candles = await asyncio.to_thread(_fetch_candles, settings)

@@ -14,11 +14,11 @@ import pandas as pd
 # src를 import path에 추가
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
-from analysis.indicators import compute_all, sma  # noqa: E402
-from analysis.patterns import analyze as analyze_patterns  # noqa: E402
-from analysis.signal_generator import evaluate  # noqa: E402
-from analysis.support_resistance import analyze as analyze_sr  # noqa: E402
 from bithumb.candle import BithumbCandle  # noqa: E402
+from core.analysis.indicators import compute_all, sma  # noqa: E402
+from core.analysis.patterns import analyze as analyze_patterns  # noqa: E402
+from core.analysis.signal_generator import evaluate  # noqa: E402
+from core.analysis.support_resistance import analyze as analyze_sr  # noqa: E402
 from utils.config import Settings  # noqa: E402
 
 # ── 설정 ──
@@ -167,7 +167,7 @@ def print_results(market: str, results: list[dict], filtered_count: int):
     )
     avg_pct = total_return / total
 
-    print(f"\n  📈 결과 요약")
+    print("\n  📈 결과 요약")
     print(f"  {'─'*50}")
     print(f"  총 시그널: {total}회 (BUY {len(buy_results)} / SELL {len(sell_results)})")
     print(f"  MTF 필터로 차단: {filtered_count}회")
@@ -187,7 +187,7 @@ def print_results(market: str, results: list[dict], filtered_count: int):
     print(f"  하루 평균 시그널: {total / (WEEKS * 7):.1f}회")
 
     # 최근 10개 시그널
-    print(f"\n  📋 최근 시그널 (최대 10개)")
+    print("\n  📋 최근 시그널 (최대 10개)")
     print(
         f"  {'시각':<22} {'시그널':>4} {'진입가':>12} {'4h후':>12}"
         f" {'변동%':>7} {'결과':>4} {'추세':>7}"
@@ -214,7 +214,7 @@ def print_results(market: str, results: list[dict], filtered_count: int):
                 reason_stats[key]["hits"] += 1
 
     if reason_stats:
-        print(f"\n  📊 판단 근거별 적중률")
+        print("\n  📊 판단 근거별 적중률")
         print(f"  {'근거':<25} {'적중':>5} {'전체':>5} {'적중률':>7}")
         print(f"  {'─'*50}")
         for key, stat in sorted(
@@ -246,7 +246,7 @@ def run_backtest():
         df = candles_to_df(candles_15m)
         print(f"  수집: {len(df)}개 ({df.iloc[0]['open_at']} ~ {df.iloc[-1]['open_at']})")
 
-        print(f"  1시간봉 수집 중...")
+        print("  1시간봉 수집 중...")
         candles_1h = fetch_candles(client, market, REF_TF_UNIT, total_1h)
         ref_df = candles_to_df(candles_1h)
         print(f"  수집: {len(ref_df)}개")

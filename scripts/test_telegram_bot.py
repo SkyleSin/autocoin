@@ -44,7 +44,7 @@ async def main() -> None:
     poller_task = asyncio.create_task(telegram_poller(sf, settings))
     try:
         await asyncio.wait_for(asyncio.shield(poller_task), timeout=30)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         poller_task.cancel()
         try:
             await poller_task

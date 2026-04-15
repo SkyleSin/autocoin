@@ -14,11 +14,11 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
-from analysis.indicators import compute_all  # noqa: E402
-from analysis.patterns import analyze as analyze_patterns  # noqa: E402
-from analysis.signal_generator import evaluate  # noqa: E402
-from analysis.support_resistance import analyze as analyze_sr  # noqa: E402
 from bithumb.base import BithumbClientBase  # noqa: E402
+from core.analysis.indicators import compute_all  # noqa: E402
+from core.analysis.patterns import analyze as analyze_patterns  # noqa: E402
+from core.analysis.signal_generator import evaluate  # noqa: E402
+from core.analysis.support_resistance import analyze as analyze_sr  # noqa: E402
 from utils.config import Settings  # noqa: E402
 
 # ── 설정 ──
@@ -122,7 +122,7 @@ def run_backtest():
     settings = Settings()
     client = BithumbClientBase(settings)
 
-    print(f"=== 패턴별·코인별 적중률 비교 백테스트 ===")
+    print("=== 패턴별·코인별 적중률 비교 백테스트 ===")
     print(f"코인: {', '.join(MARKETS)}")
     print(f"기간: 2년치 일봉, 평가: {EVAL_DAYS}일 후, 윈도우: {WINDOW}일\n")
 

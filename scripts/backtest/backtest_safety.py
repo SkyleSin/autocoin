@@ -16,8 +16,8 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
-from analysis.support_resistance import analyze as analyze_sr  # noqa: E402
 from bithumb.candle import BithumbCandle  # noqa: E402
+from core.analysis.support_resistance import analyze as analyze_sr  # noqa: E402
 from utils.config import Settings  # noqa: E402
 
 # ── 설정 ──

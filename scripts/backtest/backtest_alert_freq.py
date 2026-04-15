@@ -10,11 +10,11 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
-from analysis.indicators import compute_all, sma  # noqa: E402
-from analysis.patterns import analyze as analyze_patterns  # noqa: E402
-from analysis.signal_generator import evaluate  # noqa: E402
-from analysis.support_resistance import analyze as analyze_sr  # noqa: E402
 from bithumb.candle import BithumbCandle  # noqa: E402
+from core.analysis.indicators import compute_all, sma  # noqa: E402
+from core.analysis.patterns import analyze as analyze_patterns  # noqa: E402
+from core.analysis.signal_generator import evaluate  # noqa: E402
+from core.analysis.support_resistance import analyze as analyze_sr  # noqa: E402
 from utils.config import Settings  # noqa: E402
 
 MARKETS = ["KRW-BTC", "KRW-XRP"]
@@ -173,7 +173,7 @@ def main():
               f" (BUY {buy_signals} / SELL {sell_signals})")
         print(f"  하루 평균 시그널: {total_signals / days:.1f}회")
 
-        print(f"\n  📬 실제 알림 (alert_service 적용 후):")
+        print("\n  📬 실제 알림 (alert_service 적용 후):")
         print(f"  총 알림: {len(alerts)}회")
         print(f"    NEW: {len(new_alerts)}회")
         print(f"    CHANGED: {len(changed_alerts)}회")
@@ -191,12 +191,12 @@ def main():
             max_day = max(daily.values())
             min_day = min(daily.values())
             no_alert_days = days - len(daily)
-            print(f"\n  📅 일별 분포:")
+            print("\n  📅 일별 분포:")
             print(f"    알림 없는 날: {no_alert_days}일")
             print(f"    최소: {min_day}회/일, 최대: {max_day}회/일")
 
         # 최근 알림 20개
-        print(f"\n  📋 최근 알림 (최대 20개)")
+        print("\n  📋 최근 알림 (최대 20개)")
         print(f"  {'시각':<22} {'유형':>7} {'시그널':>4}  근거")
         print(f"  {'─'*75}")
         for a in alerts[-20:]:

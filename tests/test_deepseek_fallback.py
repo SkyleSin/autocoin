@@ -1,14 +1,14 @@
 """테스트: DeepSeek API 실패 → Ollama 폴백."""
 
-import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
-
 import sys
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from ai_engine.deepseek_llm import LLMDecision, query_deepseek, _extract_json
+from core.strategy.llm.deepseek_llm import _extract_json, query_deepseek
 
 
 def test_extract_json_code_block():
@@ -52,7 +52,7 @@ async def test_deepseek_success():
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
-    with patch("ai_engine.deepseek_llm.httpx.AsyncClient", return_value=mock_client):
+    with patch("core.strategy.llm.deepseek_llm.httpx.AsyncClient", return_value=mock_client):
         result = await query_deepseek("test prompt", api_key="sk-test")
 
     assert result.decision == "HOLD"
@@ -76,7 +76,7 @@ async def test_deepseek_parse_failure_returns_hold():
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
-    with patch("ai_engine.deepseek_llm.httpx.AsyncClient", return_value=mock_client):
+    with patch("core.strategy.llm.deepseek_llm.httpx.AsyncClient", return_value=mock_client):
         result = await query_deepseek("test", api_key="sk-test")
 
     assert result.decision == "HOLD"
@@ -101,7 +101,7 @@ async def test_deepseek_invalid_decision_normalized():
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
-    with patch("ai_engine.deepseek_llm.httpx.AsyncClient", return_value=mock_client):
+    with patch("core.strategy.llm.deepseek_llm.httpx.AsyncClient", return_value=mock_client):
         result = await query_deepseek("test", api_key="sk-test")
 
     assert result.decision == "HOLD"

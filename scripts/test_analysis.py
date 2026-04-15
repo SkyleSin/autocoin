@@ -17,7 +17,6 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from models.base import Base
-from models.candle import Candle
 from models.signal import Signal
 from utils.config import Settings
 
@@ -70,10 +69,10 @@ async def main() -> None:
     if result["status"] == "ok":
         print(f"  캔들 수: {result['candle_count']}")
         print(f"  시그널: {result['signal_type']} (confidence={result['confidence']})")
-        print(f"  판단 근거:")
+        print("  판단 근거:")
         for r in result["reasons"]:
             print(f"    - {r}")
-        print(f"  지표:")
+        print("  지표:")
         for k, v in result["indicators"].items():
             if v is not None:
                 print(f"    {k}: {v}")

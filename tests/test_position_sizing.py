@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from executor.position_sizing import (
+from core.strategy.executor.position_sizing import (
     calculate_position,
     calculate_sell_recommendation,
 )

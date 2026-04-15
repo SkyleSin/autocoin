@@ -14,9 +14,9 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
-from analysis.indicators import compute_all, sma  # noqa: E402
-from analysis.support_resistance import analyze as analyze_sr  # noqa: E402
 from bithumb.candle import BithumbCandle  # noqa: E402
+from core.analysis.indicators import compute_all, sma  # noqa: E402
+from core.analysis.support_resistance import analyze as analyze_sr  # noqa: E402
 from utils.config import Settings  # noqa: E402
 
 # ── 설정 ──
@@ -364,7 +364,7 @@ def suggest_weights(stats: dict, label_l: str):
     print(f"  💡 제안 base 가중치 ({label_l} 적중률 기반)")
     print(f"  {'='*60}")
 
-    print(f"\n  [S/R 트리거]")
+    print("\n  [S/R 트리거]")
     for key, s in sorted(stats["sr"].items(), key=lambda x: x[1]["total"], reverse=True):
         if s["total"] < 10:
             continue
@@ -372,7 +372,7 @@ def suggest_weights(stats: dict, label_l: str):
         weight = max(0.20, min(0.50, rate * 0.7))
         print(f"    {key:<25} 적중률 {rate*100:5.1f}% ({s['total']:>4}건) → 가중치 {weight:.2f}")
 
-    print(f"\n  [확인 지표]")
+    print("\n  [확인 지표]")
     for key, s in sorted(
         stats["indicator"].items(), key=lambda x: x[1]["total"], reverse=True,
     ):

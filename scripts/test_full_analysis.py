@@ -12,14 +12,13 @@ import pandas as pd
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from analysis.indicators import compute_all
-from analysis.patterns import analyze as analyze_patterns
-from analysis.signal_generator import evaluate
-from analysis.support_resistance import analyze as analyze_sr
+from core.analysis.indicators import compute_all
+from core.analysis.patterns import analyze as analyze_patterns
+from core.analysis.signal_generator import evaluate
+from core.analysis.support_resistance import analyze as analyze_sr
 from job_runner.handlers.candle import _upsert_candles
 from models.base import Base
 from models.candle import Candle
-from models.signal import Signal
 from utils.config import Settings
 
 
@@ -96,7 +95,7 @@ async def main() -> None:
     print("\n=== 5. 종합 시그널 ===")
     result = evaluate(snap, close_price, pattern_analysis=pat, sr_analysis=sr)
     print(f"  시그널: {result.signal_type} (confidence={result.confidence})")
-    print(f"  판단 근거:")
+    print("  판단 근거:")
     for r in result.reasons:
         print(f"    - {r}")
 

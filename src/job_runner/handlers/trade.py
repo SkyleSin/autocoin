@@ -9,8 +9,8 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from executor.position_sizing import calculate_position
-from executor.risk_manager import check_risk
+from core.strategy.executor.position_sizing import calculate_position
+from core.strategy.executor.risk_manager import check_risk
 from job_runner.exceptions import JobExecutionFailed
 from job_runner.rate_limit import AsyncSlidingWindowRateLimiter
 from job_runner.workers import PrivateRequester

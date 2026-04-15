@@ -5,10 +5,9 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, select, text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.candle import Candle
 from models.signal import Signal
 from models.trade import Trade
 from services.accuracy_service import get_accuracy_summary, verify_pending_signals
@@ -157,7 +156,7 @@ async def generate_report(
 
     # ── 6. 섀도우 트레이딩 (자동화 가정) ──
     try:
-        from services.shadow_service import get_shadow_summary
+        from core.shadow.shadow_service import get_shadow_summary
         shadow = await get_shadow_summary(session)
         if shadow["buy_count"] > 0 or shadow["sell_count"] > 0:
             lines.append("🔮 *섀도우 트레이딩* (자동화 가정)")
@@ -563,12 +562,12 @@ async def generate_detail_report(session: AsyncSession) -> list[str]:
 
     # ── 7. 섀도우 트레이딩 상세 ──
     try:
-        from services.shadow_service import get_shadow_summary
+        from core.shadow.shadow_service import get_shadow_summary
         shadow = await get_shadow_summary(session)
         if shadow["buy_count"] > 0 or shadow["sell_count"] > 0:
             lines.append("\n🔮 *섀도우 트레이딩* (자동화 가정)")
             lines.append("```")
-            lines.append(f"초기 자본:  1,000,000원")
+            lines.append("초기 자본:  1,000,000원")
             lines.append(f"현재 평가:  {shadow['total_value']:>12,.0f}원")
             lines.append(f"수익률:     {shadow['return_pct']:>+11.2f}%")
             lines.append(f"실현 손익:  {shadow['total_pnl']:>+12,.0f}원")

@@ -11,10 +11,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from ai_engine.local_llm import query_ollama
-from ai_engine.prompts import build_analysis_prompt
-from analysis.indicators import compute_all
-from analysis.signal_generator import evaluate
+from core.analysis.indicators import compute_all
+from core.analysis.signal_generator import evaluate
+from core.strategy.llm.local_llm import query_ollama
+from core.strategy.llm.prompts import build_analysis_prompt
 from job_runner.handlers.candle import _upsert_candles
 from models.base import Base
 from models.candle import Candle

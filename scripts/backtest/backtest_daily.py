@@ -13,11 +13,11 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
-from analysis.indicators import compute_all  # noqa: E402
-from analysis.patterns import analyze as analyze_patterns  # noqa: E402
-from analysis.signal_generator import evaluate  # noqa: E402
-from analysis.support_resistance import analyze as analyze_sr  # noqa: E402
 from bithumb.base import BithumbClientBase  # noqa: E402
+from core.analysis.indicators import compute_all  # noqa: E402
+from core.analysis.patterns import analyze as analyze_patterns  # noqa: E402
+from core.analysis.signal_generator import evaluate  # noqa: E402
+from core.analysis.support_resistance import analyze as analyze_sr  # noqa: E402
 from utils.config import Settings  # noqa: E402
 
 # ── 설정 ──
@@ -145,7 +145,7 @@ def print_results(market: str, results: list[dict], eval_days: int):
     print(f"  월 평균 시그널: {total / 12:.1f}회")
 
     # 최근 15개 시그널
-    print(f"\n  📋 최근 시그널 (최대 15개)")
+    print("\n  📋 최근 시그널 (최대 15개)")
     print(f"  {'날짜':<12} {'시그널':>4} {'진입가':>14} {f'{eval_days}d후':>14}"
           f" {'변동%':>8} {'결과':>4}")
     print(f"  {'─'*62}")
@@ -169,7 +169,7 @@ def print_results(market: str, results: list[dict], eval_days: int):
                 reason_stats[key]["hits"] += 1
 
     if reason_stats:
-        print(f"\n  📊 판단 근거별 적중률")
+        print("\n  📊 판단 근거별 적중률")
         print(f"  {'근거':<25} {'적중':>5} {'전체':>5} {'적중률':>7}")
         print(f"  {'─'*50}")
         for key, stat in sorted(
@@ -183,10 +183,10 @@ def run_backtest():
     settings = Settings()
     client = BithumbClientBase(settings)
 
-    print(f"=== 백테스트: 1년치 일봉 데이터 ===")
-    print(f"구조: 트리거(패턴/지지저항) 필수 + 확인(MACD전환/RSI/BB) + SMA 게이트")
+    print("=== 백테스트: 1년치 일봉 데이터 ===")
+    print("구조: 트리거(패턴/지지저항) 필수 + 확인(MACD전환/RSI/BB) + SMA 게이트")
     print(f"분석 윈도우: {WINDOW}일, 평가: {EVAL_DAYS}일 후 가격 비교")
-    print(f"패턴 order: 5 (일봉 기본값)\n")
+    print("패턴 order: 5 (일봉 기본값)\n")
 
     for market in MARKETS:
         print(f"\n{'='*60}")

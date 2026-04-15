@@ -17,12 +17,12 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
-from analysis.indicators import compute_all, sma  # noqa: E402
-from analysis.patterns import analyze as analyze_patterns  # noqa: E402
-from analysis.signal_generator import evaluate  # noqa: E402
-from analysis.support_resistance import analyze as analyze_sr  # noqa: E402
 from bithumb.candle import BithumbCandle  # noqa: E402
-from executor.position_sizing import calculate_position  # noqa: E402
+from core.analysis.indicators import compute_all, sma  # noqa: E402
+from core.analysis.patterns import analyze as analyze_patterns  # noqa: E402
+from core.analysis.signal_generator import evaluate  # noqa: E402
+from core.analysis.support_resistance import analyze as analyze_sr  # noqa: E402
+from core.strategy.executor.position_sizing import calculate_position  # noqa: E402
 from utils.config import Settings  # noqa: E402
 
 # ── 설정 ──
@@ -148,7 +148,7 @@ def run_simulation():
 
     print(f"{'='*70}")
     print(f"  현재 전략 시뮬레이션 — {DAYS}일 | 초기 자본 {INITIAL_KRW:,.0f} KRW")
-    print(f"  전략: BUY → 포지션 사이징 매수 | SELL → 전량 매도")
+    print("  전략: BUY → 포지션 사이징 매수 | SELL → 전량 매도")
     print(f"  수수료: {FEE_RATE*100:.2f}% | 쿨다운: 4시간 | 마켓: {len(MARKETS)}개")
     print(f"{'='*70}\n")
 
@@ -173,7 +173,7 @@ def run_simulation():
 
     # ── 시뮬레이션 실행 ──
     print(f"\n{'='*70}")
-    print(f"  시뮬레이션 실행 중...")
+    print("  시뮬레이션 실행 중...")
     print(f"{'='*70}\n")
 
     for market, (df, ref_df) in all_market_data.items():
@@ -314,10 +314,10 @@ def run_simulation():
     winning = [t for t in sell_trades if t.pnl > 0]
 
     print(f"\n{'='*70}")
-    print(f"  시뮬레이션 결과 — 현재 전략 (전량 매도)")
+    print("  시뮬레이션 결과 — 현재 전략 (전량 매도)")
     print(f"{'='*70}")
 
-    print(f"\n  [수익]")
+    print("\n  [수익]")
     print(f"  초기 자본:        {INITIAL_KRW:>14,.0f} KRW")
     print(f"  최종 평가:        {total_value:>14,.0f} KRW")
     print(f"  실현 손익:        {realized_pnl:>+14,.0f} KRW")
@@ -325,7 +325,7 @@ def run_simulation():
     print(f"  총 수수료:        {total_fees:>14,.0f} KRW")
     print(f"  총 수익률:        {total_return:>+13.2f}%")
 
-    print(f"\n  [거래]")
+    print("\n  [거래]")
     print(f"  매수:             {len(buy_trades):>10}건")
     print(f"  매도:             {len(sell_trades):>10}건")
     if sell_trades:
@@ -338,7 +338,7 @@ def run_simulation():
         print(f"  평균 수익 (승):   {avg_win:>+14,.0f} KRW")
         print(f"  평균 손실 (패):   {avg_loss:>+14,.0f} KRW")
 
-    print(f"\n  [시그널]")
+    print("\n  [시그널]")
     print(f"  기술분석 총:      {state.signals_total:>10}건")
     print(f"  HOLD:             {state.signals_hold:>10}건")
     print(f"  MTF 필터:         {state.filtered_mtf:>10}건")
@@ -346,14 +346,14 @@ def run_simulation():
     print(f"  LLM 호출:         {state.llm_calls:>10}건 (BUY {state.signals_buy}"
           f" / SELL {state.signals_sell})")
 
-    print(f"\n  [LLM 비용 추정]")
+    print("\n  [LLM 비용 추정]")
     print(f"  호출 수:          {state.llm_calls:>10}건")
     print(f"  단가:             ${LLM_COST_PER_CALL_USD:.3f}/건")
     print(f"  30일 비용:        ${state.llm_calls * LLM_COST_PER_CALL_USD:>9.2f}")
 
     # ── 미청산 포지션 ──
     if state.positions:
-        print(f"\n  [미청산 포지션]")
+        print("\n  [미청산 포지션]")
         for m, pos in state.positions.items():
             last_price = float(all_market_data[m][0].iloc[-1]["close"])
             pos_pnl = (last_price - pos.avg_price) / pos.avg_price * 100
@@ -362,7 +362,7 @@ def run_simulation():
 
     # ── 거래 이력 ──
     if state.trades:
-        print(f"\n  [거래 이력]")
+        print("\n  [거래 이력]")
         print(f"  {'시각':<20} {'마켓':<10} {'방향':>4} {'가격':>14}"
               f" {'금액':>12} {'손익':>12}")
         print(f"  {'─'*75}")
@@ -372,7 +372,7 @@ def run_simulation():
                   f" {t.price:>14,.0f} {t.amount_krw:>12,.0f} {pnl_str}")
 
     print(f"\n{'='*70}")
-    print(f"  시뮬레이션 완료")
+    print("  시뮬레이션 완료")
     print(f"{'='*70}")
 
     return state

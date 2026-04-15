@@ -10,8 +10,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from executor.risk_manager import check_risk
-from executor.trade_executor import execute_trade
+from core.strategy.executor.risk_manager import check_risk
+from core.strategy.executor.trade_executor import execute_trade
 from models.base import Base
 from utils.config import Settings
 

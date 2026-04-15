@@ -61,7 +61,7 @@ def _make_signal(nearest_support=100000):
 
 @pytest.mark.asyncio
 async def test_get_nearest_support():
-    from safety.monitor import _get_nearest_support
+    from core.safety.monitor import _get_nearest_support
 
     signal = _make_signal(100000)
     session = _make_session(signal)
@@ -72,7 +72,7 @@ async def test_get_nearest_support():
 
 @pytest.mark.asyncio
 async def test_get_nearest_support_none():
-    from safety.monitor import _get_nearest_support
+    from core.safety.monitor import _get_nearest_support
 
     session = _make_session(None)
     support, indicators = await _get_nearest_support(session, "KRW-BTC")
@@ -85,7 +85,7 @@ async def test_get_nearest_support_none():
 @pytest.mark.asyncio
 async def test_immediate_trigger_3pct():
     """3%+ 이탈 → 즉시 LLM 호출 + 매도."""
-    from safety.monitor import _breach_counts, _check_single_asset, _last_triggered
+    from core.safety.monitor import _breach_counts, _check_single_asset, _last_triggered
 
     _breach_counts.clear()
     _last_triggered.clear()
@@ -101,9 +101,9 @@ async def test_immediate_trigger_3pct():
     llm_result.reason = "급락 중, 추가 하락 예상"
 
     with (
-        patch("safety.monitor._get_ticker_sync", return_value=96000),
-        patch("safety.monitor._call_emergency_llm", new_callable=AsyncMock, return_value=llm_result),
-        patch("safety.monitor.send_message", new_callable=AsyncMock) as mock_msg,
+        patch("core.safety.monitor._get_ticker_sync", return_value=96000),
+        patch("core.safety.monitor._call_emergency_llm", new_callable=AsyncMock, return_value=llm_result),
+        patch("core.safety.monitor.send_message", new_callable=AsyncMock) as mock_msg,
     ):
         await _check_single_asset(session, settings, "BTC", 0.5)
 
@@ -117,7 +117,7 @@ async def test_immediate_trigger_3pct():
 @pytest.mark.asyncio
 async def test_immediate_trigger_hold():
     """3%+ 이탈이지만 LLM이 HOLD → 경고만."""
-    from safety.monitor import _breach_counts, _check_single_asset, _last_triggered
+    from core.safety.monitor import _breach_counts, _check_single_asset, _last_triggered
 
     _breach_counts.clear()
     _last_triggered.clear()
@@ -132,9 +132,9 @@ async def test_immediate_trigger_hold():
     llm_result.reason = "RSI 과매도, 반등 가능"
 
     with (
-        patch("safety.monitor._get_ticker_sync", return_value=96000),
-        patch("safety.monitor._call_emergency_llm", new_callable=AsyncMock, return_value=llm_result),
-        patch("safety.monitor.send_message", new_callable=AsyncMock) as mock_msg,
+        patch("core.safety.monitor._get_ticker_sync", return_value=96000),
+        patch("core.safety.monitor._call_emergency_llm", new_callable=AsyncMock, return_value=llm_result),
+        patch("core.safety.monitor.send_message", new_callable=AsyncMock) as mock_msg,
     ):
         await _check_single_asset(session, settings, "BTC", 0.5)
 
@@ -150,7 +150,7 @@ async def test_immediate_trigger_hold():
 @pytest.mark.asyncio
 async def test_consecutive_trigger():
     """1~3% 이탈 3회 연속 → LLM 호출."""
-    from safety.monitor import _breach_counts, _check_single_asset, _last_triggered
+    from core.safety.monitor import _breach_counts, _check_single_asset, _last_triggered
 
     _breach_counts.clear()
     _last_triggered.clear()
@@ -166,9 +166,9 @@ async def test_consecutive_trigger():
 
     # 현재가 98500 → 1.5% 이탈
     with (
-        patch("safety.monitor._get_ticker_sync", return_value=98500),
-        patch("safety.monitor._call_emergency_llm", new_callable=AsyncMock, return_value=llm_result) as mock_llm,
-        patch("safety.monitor.send_message", new_callable=AsyncMock),
+        patch("core.safety.monitor._get_ticker_sync", return_value=98500),
+        patch("core.safety.monitor._call_emergency_llm", new_callable=AsyncMock, return_value=llm_result) as mock_llm,
+        patch("core.safety.monitor.send_message", new_callable=AsyncMock),
     ):
         # 1회차 — 감시만
         await _check_single_asset(session, settings, "BTC", 0.5)
@@ -186,7 +186,7 @@ async def test_consecutive_trigger():
 @pytest.mark.asyncio
 async def test_below_1pct_ignored():
     """1% 미만 이탈 → 무시."""
-    from safety.monitor import _breach_counts, _check_single_asset, _last_triggered
+    from core.safety.monitor import _breach_counts, _check_single_asset, _last_triggered
 
     _breach_counts.clear()
     _last_triggered.clear()
@@ -197,9 +197,9 @@ async def test_below_1pct_ignored():
 
     # 현재가 99500 → 0.5% 이탈
     with (
-        patch("safety.monitor._get_ticker_sync", return_value=99500),
-        patch("safety.monitor._call_emergency_llm", new_callable=AsyncMock) as mock_llm,
-        patch("safety.monitor.send_message", new_callable=AsyncMock),
+        patch("core.safety.monitor._get_ticker_sync", return_value=99500),
+        patch("core.safety.monitor._call_emergency_llm", new_callable=AsyncMock) as mock_llm,
+        patch("core.safety.monitor.send_message", new_callable=AsyncMock),
     ):
         await _check_single_asset(session, settings, "BTC", 0.5)
         assert not mock_llm.called
@@ -210,7 +210,7 @@ async def test_cooldown_prevents_retrigger():
     """쿨다운 내 재트리거 방지."""
     from datetime import UTC, datetime
 
-    from safety.monitor import _breach_counts, _check_single_asset, _last_triggered
+    from core.safety.monitor import _breach_counts, _check_single_asset, _last_triggered
 
     _breach_counts.clear()
     _last_triggered.clear()
@@ -221,9 +221,9 @@ async def test_cooldown_prevents_retrigger():
     session = _make_session(signal)
 
     with (
-        patch("safety.monitor._get_ticker_sync", return_value=96000),
-        patch("safety.monitor._call_emergency_llm", new_callable=AsyncMock) as mock_llm,
-        patch("safety.monitor.send_message", new_callable=AsyncMock),
+        patch("core.safety.monitor._get_ticker_sync", return_value=96000),
+        patch("core.safety.monitor._call_emergency_llm", new_callable=AsyncMock) as mock_llm,
+        patch("core.safety.monitor.send_message", new_callable=AsyncMock),
     ):
         await _check_single_asset(session, settings, "BTC", 0.5)
         assert not mock_llm.called  # 쿨다운으로 스킵
@@ -232,7 +232,7 @@ async def test_cooldown_prevents_retrigger():
 @pytest.mark.asyncio
 async def test_breach_counter_resets_on_recovery():
     """가격 복귀 시 카운터 리셋."""
-    from safety.monitor import _breach_counts, _check_single_asset, _last_triggered
+    from core.safety.monitor import _breach_counts, _check_single_asset, _last_triggered
 
     _breach_counts.clear()
     _last_triggered.clear()
@@ -242,17 +242,17 @@ async def test_breach_counter_resets_on_recovery():
     session = _make_session(signal)
 
     with (
-        patch("safety.monitor._call_emergency_llm", new_callable=AsyncMock),
-        patch("safety.monitor.send_message", new_callable=AsyncMock),
+        patch("core.safety.monitor._call_emergency_llm", new_callable=AsyncMock),
+        patch("core.safety.monitor.send_message", new_callable=AsyncMock),
     ):
         # 2회 이탈
-        with patch("safety.monitor._get_ticker_sync", return_value=98500):
+        with patch("core.safety.monitor._get_ticker_sync", return_value=98500):
             await _check_single_asset(session, settings, "BTC", 0.5)
             await _check_single_asset(session, settings, "BTC", 0.5)
         assert _breach_counts.get("KRW-BTC", 0) == 2
 
         # 가격 복귀
-        with patch("safety.monitor._get_ticker_sync", return_value=100500):
+        with patch("core.safety.monitor._get_ticker_sync", return_value=100500):
             await _check_single_asset(session, settings, "BTC", 0.5)
         assert _breach_counts.get("KRW-BTC", 0) == 0
 
@@ -261,7 +261,7 @@ async def test_breach_counter_resets_on_recovery():
 
 
 def test_emergency_prompt_format():
-    from ai_engine.emergency_prompt import build_emergency_prompt
+    from core.strategy.llm.emergency_prompt import build_emergency_prompt
 
     prompt = build_emergency_prompt(
         market="KRW-BTC",

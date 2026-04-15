@@ -1,10 +1,10 @@
 """테스트: 텔레그램 Markdown 파싱 실패 → 플레인 텍스트 폴백."""
 
-import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
-
 import sys
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 

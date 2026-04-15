@@ -12,14 +12,14 @@ import pandas as pd
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from analysis.chart import generate_chart_from_db_candles
-from analysis.indicators import compute_all
-from analysis.patterns import analyze as analyze_patterns
-from analysis.signal_generator import evaluate
-from analysis.support_resistance import analyze as analyze_sr
+from core.analysis.chart import generate_chart_from_db_candles
+from core.analysis.indicators import compute_all
+from core.analysis.patterns import analyze as analyze_patterns
+from core.analysis.signal_generator import evaluate
+from core.analysis.support_resistance import analyze as analyze_sr
 from models.base import Base
 from models.candle import Candle
-from telegram.bot import send_photo, send_signal_alert
+from telegram.bot import send_signal_alert
 from telegram.messages import format_combined_alert
 from utils.config import Settings
 
