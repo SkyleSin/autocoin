@@ -48,7 +48,7 @@ class BaseStrategy(ABC):
 
 _STRATEGIES: dict[str, type[BaseStrategy]] = {}
 
-ACTIVE_STRATEGY = "5m_trigger"
+ACTIVE_STRATEGY = "topdown_mtf"
 
 
 def register_strategy(cls: type[BaseStrategy]) -> type[BaseStrategy]:

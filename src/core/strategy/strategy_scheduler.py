@@ -82,7 +82,7 @@ async def _handle_event(
         combined_indicators = meta.get("indicators", {})
         strategy_timeframe = meta.get("timeframe", event.timeframe)
 
-        # Signal DB 저장
+        # Signal DB 저장 (entry_price 설정 + MFE/MAE 초기값)
         signal = Signal(
             market=event.market,
             timeframe=strategy_timeframe,
@@ -90,8 +90,24 @@ async def _handle_event(
             confidence=result.confidence,
             indicators=combined_indicators,
             source="technical",
+            entry_price=close_price if result.signal_type in ("BUY", "SELL") else None,
+            mfe=close_price if result.signal_type in ("BUY", "SELL") else None,
+            mae=close_price if result.signal_type in ("BUY", "SELL") else None,
         )
         session.add(signal)
+
+        # BUY/SELL → 반대 방향 시그널 종료 (MFE/MAE 평가)
+        if result.signal_type in ("BUY", "SELL") and close_price > 0:
+            from services.mfe_mae_tracker import close_opposite_signals
+
+            closed = await close_opposite_signals(
+                session, event.market, result.signal_type, close_price,
+            )
+            if closed:
+                logger.info(
+                    "strategy: closed %d opposite signals for %s",
+                    closed, event.market,
+                )
 
         logger.info(
             "strategy: %s %s → %s (conf=%.2f)",

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Boolean, Float, Index, String
+from sqlalchemy import Boolean, DateTime, Float, Index, String
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -64,4 +65,36 @@ class Signal(Base):
         nullable=False,
         default="1.0.1",
         comment="판단 기준 버전 (기준 변경 시 signals_bak으로 아카이빙)",
+    )
+
+    # ── MFE/MAE 트래킹 ──
+    entry_price: Mapped[float | None] = mapped_column(
+        Float,
+        nullable=True,
+        comment="시그널 생성 시점 종가",
+    )
+    exit_price: Mapped[float | None] = mapped_column(
+        Float,
+        nullable=True,
+        comment="시그널 종료(매도) 시점 가격",
+    )
+    mfe: Mapped[float | None] = mapped_column(
+        Float,
+        nullable=True,
+        comment="Maximum Favorable Excursion (최대 유리 가격)",
+    )
+    mae: Mapped[float | None] = mapped_column(
+        Float,
+        nullable=True,
+        comment="Maximum Adverse Excursion (최대 불리 가격)",
+    )
+    closed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment="시그널 종료 시각",
+    )
+    quality_score: Mapped[float | None] = mapped_column(
+        Float,
+        nullable=True,
+        comment="MFE/MAE 기반 품질 점수 (0.0~1.0)",
     )

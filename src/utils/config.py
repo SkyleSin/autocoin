@@ -142,12 +142,12 @@ class Settings(BaseSettings):
     )
 
     candle_interval_sec: float = Field(
-        default=300.0,
-        description="캔들 수집 주기(초). 5분봉 기준 300.",
+        default=900.0,
+        description="캔들 수집 주기(초). 15분봉 기준 900.",
         validation_alias="AUTOCOIN_CANDLE_INTERVAL_SEC",
     )
     candle_unit: int = Field(
-        default=5,
+        default=15,
         description="분봉 단위 (1, 3, 5, 10, 15, 30, 60, 240).",
         validation_alias="AUTOCOIN_CANDLE_UNIT",
     )

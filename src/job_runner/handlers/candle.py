@@ -113,6 +113,15 @@ async def handle_collect_candles(
         upserted = await _upsert_candles(session, raw, timeframe)
         job.response = {"upserted": upserted, "timeframe": timeframe}
         ref_only = bool(job.content.get("ref_only", False))
+
+        # MFE/MAE 트래킹: 캔들 고가/저가로 열린 시그널 갱신
+        if raw:
+            from services.mfe_mae_tracker import update_mfe_mae
+
+            candle_high = max(float(c["high_price"]) for c in raw)
+            candle_low = min(float(c["low_price"]) for c in raw)
+            await update_mfe_mae(session, market, candle_high, candle_low)
+
         # 수집 완료 → compute_indicators Job 자동 생성 (모든 TF)
         compute_job = Job(
             type="compute_indicators",
