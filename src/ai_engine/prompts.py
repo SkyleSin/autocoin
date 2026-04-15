@@ -101,6 +101,14 @@ def build_analysis_prompt(
             f"- {trend_data.get('description', '')}"
         )
 
+    # --- 시장 국면 ---
+    bear_market = indicators.get("bear_market", False)
+    market_phase = (
+        "🐻 하락장 (BTC 일봉 종가 < SMA50) — 매수 시 각별히 주의"
+        if bear_market
+        else "✅ 정상 (BTC 일봉 종가 > SMA50)"
+    )
+
     # --- 1차 분석 결과 ---
     reasons_text = "\n".join(f"- {r}" for r in technical_reasons)
 
@@ -140,16 +148,21 @@ def build_analysis_prompt(
 ## 상위 타임프레임 추세
 {trend_text}
 
+## 시장 국면
+- {market_phase}
+
 ## 1차 기술 분석 결과
 - 시그널: {technical_signal}
 - 판단 근거:
 {reasons_text}
 
 ## 지시사항
-1. 기술 지표, 차트 패턴, 지지/저항선을 종합적으로 분석하세요.
-2. 1차 분석 결과에 동의하는지, 다른 관점이 있는지 판단하세요.
-3. 단기 노이즈에 반응하지 마세요. 명확한 추세와 강한 시그널이 있을 때만 BUY/SELL을 판단하세요.
-4. 애매하거나 확신이 없으면 반드시 HOLD를 선택하세요. 과도한 매매보다 관망이 낫습니다.
+1. 기술 지표, 지지/저항선, 시장 국면을 종합적으로 분석하세요.
+2. 1차 분석은 백테스트 검증된 지표 조합(적중률 53~59%)으로 이미 필터링되었습니다. 1차 결과를 존중하되, 상충하는 근거가 있을 때만 HOLD로 전환하세요.
+3. **시장 국면에 따라 판단 기준을 조절하세요:**
+   - ✅ 정상장: 1차 BUY/SELL 시그널에 동의하는 것이 기본. 반대할 명확한 이유가 없으면 동의.
+   - 🐻 하락장: BUY는 RSI 25 미만 등 강한 반등 신호가 있을 때만 동의. SELL은 적극 동의.
+4. HOLD를 남발하지 마세요. 1차 시스템이 이미 보수적으로 설계되어 있으므로, 여기까지 올라온 시그널은 상당한 근거가 있습니다.
 5. 반드시 아래 JSON 형식으로만 응답하세요.
 
 {{"decision": "BUY/SELL/HOLD", "confidence": 0.0~1.0, "reason": "판단 근거 1~2문장"}}"""

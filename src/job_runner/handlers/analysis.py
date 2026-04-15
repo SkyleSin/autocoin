@@ -226,16 +226,10 @@ async def _run_technical_analysis(
                     + [f"⚠️ 상위 추세 하락 ({trend.description}) — 매수 보류"],
                 )
 
-    # 하락장 필터: BTC 일봉 < SMA50이면 BUY 차단
-    if signal_result.signal_type == "BUY":
+    # 하락장 정보: BTC 일봉 < SMA50 여부를 LLM에 전달 (차단하지 않음)
+    if signal_result.signal_type in ("BUY", "SELL"):
         is_bear = await _check_bear_market(session)
-        if is_bear:
-            combined_indicators["bear_market"] = True
-            signal_result = SignalResult(
-                "HOLD", 0.0,
-                signal_result.reasons
-                + ["🐻 하락장 (BTC < 일봉 SMA50) — 매수 차단"],
-            )
+        combined_indicators["bear_market"] = is_bear
 
     signal = Signal(
         market=market,
