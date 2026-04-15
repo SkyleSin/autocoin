@@ -3,17 +3,17 @@ from __future__ import annotations
 
 import pandas as pd
 
-from analysis.pattern_flag import detect_bear_flag, detect_bull_flag
-from analysis.pattern_helpers import fit_trendline, min_swing_pct, order_for_timeframe
-from analysis.pattern_structural import detect_double_bottom, detect_double_top
-from analysis.pattern_structural2 import (
+from .pattern_flag import detect_bear_flag, detect_bull_flag
+from .pattern_helpers import fit_trendline, min_swing_pct, order_for_timeframe
+from .pattern_structural import detect_double_bottom, detect_double_top
+from .pattern_structural2 import (
     detect_head_and_shoulders,
     detect_inverse_head_and_shoulders,
 )
-from analysis.pattern_trend_cont import detect_bearish_continuation, detect_bullish_continuation
-from analysis.pattern_trendline import classify_trendline_patterns
-from analysis.pattern_triple import detect_triple_bottom, detect_triple_top
-from analysis.pattern_utils import (
+from .pattern_trend_cont import detect_bearish_continuation, detect_bullish_continuation
+from .pattern_trendline import classify_trendline_patterns
+from .pattern_triple import detect_triple_bottom, detect_triple_top
+from .pattern_utils import (
     PatternAnalysis,
     PatternMatch,
     find_peaks,

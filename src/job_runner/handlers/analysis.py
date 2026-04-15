@@ -1,285 +1,30 @@
-"""분석 핸들러 — analyze_technical, analyze_local_llm."""
+"""분석 핸들러 — analyze_local_llm.
+
+analyze_technical은 strategy_scheduler로 이관됨.
+기존 Job 호환을 위해 핸들러는 유지하되 no-op 처리.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
 
-import pandas as pd
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ai_engine.prompts import build_analysis_prompt
-from analysis.chart import generate_chart_from_db_candles
-from analysis.indicators import compute_all
-from analysis.patterns import analyze as analyze_patterns
-from analysis.signal_generator import SignalResult, evaluate
-from analysis.support_resistance import analyze as analyze_sr
-from analysis.trend import get_higher_trend
+from core.analysis.chart import generate_chart_from_db_candles
+from core.strategy.llm.prompts import build_analysis_prompt
 from models.active_alert import ActiveAlert
 from models.candle import Candle
 from models.job import Job
 from models.job_status import JobStatus
 from models.signal import Signal
-from services.alert_service import AlertAction, check_alert, check_alert_preview
+from services.alert_service import AlertAction, check_alert
 from telegram.bot import send_signal_alert
 from telegram.messages import format_combined_alert
 from utils.config import Settings
 
 logger = logging.getLogger(__name__)
-
-
-async def _check_mtf_direction(
-    session: AsyncSession,
-    market: str,
-    signal_type: str,
-) -> dict[str, Any]:
-    """15분봉/1시간봉의 시그널 방향을 확인하여 필터링 정보 반환.
-
-    Returns:
-        conflict: True면 15분봉이 반대 방향 → HOLD
-        1h_agree: True면 1시간봉이 같은 방향 → 부스트
-        1h_oppose: True면 1시간봉이 반대 방향 → 감쇠
-    """
-    result: dict[str, Any] = {
-        "conflict": False, "1h_agree": False, "1h_oppose": False, "detail": "",
-    }
-
-    for tf, tf_label in [("15m", "15분봉"), ("1h", "1시간봉")]:
-        rows = await session.execute(
-            select(Candle)
-            .where(Candle.market == market, Candle.timeframe == tf)
-            .order_by(Candle.open_at.desc())
-            .limit(200)
-        )
-        candles = list(reversed(rows.scalars().all()))
-        if len(candles) < 50:
-            continue
-
-        closes = pd.Series([float(c.close) for c in candles])
-        volumes = pd.Series([float(c.volume) for c in candles])
-        snap = compute_all(closes, volumes)
-        if snap is None:
-            continue
-
-        close_price = float(candles[-1].close)
-        tf_signal = evaluate(snap, close_price, timeframe=tf)
-
-        if tf_signal.signal_type == "HOLD":
-            continue
-
-        if tf == "15m":
-            if tf_signal.signal_type != signal_type:
-                result["conflict"] = True
-                result["detail"] = (
-                    f"{tf_label} {tf_signal.signal_type} "
-                    f"({tf_signal.confidence:.1%}) vs 5분봉 {signal_type}"
-                )
-                return result
-        elif tf == "1h":
-            if tf_signal.signal_type == signal_type:
-                result["1h_agree"] = True
-            else:
-                result["1h_oppose"] = True
-
-    return result
-
-
-async def _check_bear_market(session: AsyncSession) -> bool:
-    """BTC 일봉 종가 < SMA50이면 하락장으로 판단."""
-    rows = await session.execute(
-        select(Candle)
-        .where(Candle.market == "KRW-BTC", Candle.timeframe == "1d")
-        .order_by(Candle.open_at.desc())
-        .limit(60)
-    )
-    candles = list(reversed(rows.scalars().all()))
-    if len(candles) < 50:
-        return False
-
-    closes = pd.Series([float(c.close) for c in candles])
-    sma50 = closes.rolling(50).mean()
-    if pd.isna(sma50.iloc[-1]):
-        return False
-
-    is_bear = float(closes.iloc[-1]) < float(sma50.iloc[-1])
-    if is_bear:
-        logger.info(
-            "bear_market: BTC %.0f < SMA50 %.0f",
-            float(closes.iloc[-1]), float(sma50.iloc[-1]),
-        )
-    return is_bear
-
-
-async def _check_position_limit(
-    session: AsyncSession,
-    market: str,
-    settings: Settings,
-) -> bool:
-    """코인당 포지션 한도 초과 여부 확인. True면 매수 차단."""
-    from models.active_alert import ActiveAlert
-
-    # 간단한 방법: active_alerts에서 해당 코인의 BUY 알림 수로 추정
-    # 실제로는 보유량을 확인해야 하지만, 시그널 단계에서는 근사치 사용
-    # 정확한 한도 체크는 check_balance 핸들러에서 수행
-    return False  # 실제 한도 체크는 매매 실행 단계(check_balance)에서 수행
-
-
-async def _run_technical_analysis(
-    session: AsyncSession,
-    market: str,
-    timeframe: str,
-    settings: Settings | None = None,
-    candle_limit: int = 200,
-    ref_timeframes: list[str] | None = None,
-    pattern_markets: list[str] | None = None,
-) -> dict[str, Any]:
-    """DB에서 캔들 로드 → 지표 계��� → Signal 저장 → 결과 반��."""
-    result_rows = await session.execute(
-        select(Candle)
-        .where(Candle.market == market, Candle.timeframe == timeframe)
-        .order_by(Candle.open_at.desc())
-        .limit(candle_limit)
-    )
-    candles = list(reversed(result_rows.scalars().all()))
-
-    if len(candles) < 26:
-        return {
-            "status": "insufficient_data",
-            "candle_count": len(candles),
-            "required": 26,
-        }
-
-    highs = pd.Series([float(c.high) for c in candles])
-    lows = pd.Series([float(c.low) for c in candles])
-    closes = pd.Series([float(c.close) for c in candles])
-    volumes = pd.Series([float(c.volume) for c in candles])
-
-    snap = compute_all(closes, volumes)
-    if snap is None:
-        return {"status": "compute_failed", "candle_count": len(candles)}
-
-    # 패턴 분석: 대상 마켓에서만 실행 (BTC, ETH 등)
-    use_patterns = not pattern_markets or market in pattern_markets
-    pat = analyze_patterns(highs, lows, closes, timeframe=timeframe, volumes=volumes) if use_patterns else None
-    sr = analyze_sr(highs, lows, closes)
-
-    close_price = float(candles[-1].close)
-    signal_result = evaluate(
-        snap, close_price, timeframe=timeframe, sr_analysis=sr,
-    )
-
-    combined_indicators = {
-        **snap.to_dict(),
-        "patterns": pat.to_dict() if pat else {"patterns": [], "conflicts": []},
-        "support_resistance": sr.to_dict(),
-    }
-
-    # 멀티TF 필터: 15분봉/1시간봉 방향 확인
-    ref_tfs = ref_timeframes or []
-    if signal_result.signal_type in ("BUY", "SELL") and ref_tfs:
-        # 상위 추세 (모멘텀 + 가격 위치 기반)
-        trend = await get_higher_trend(session, market, ref_tfs)
-        combined_indicators["higher_trend"] = {
-            "direction": trend.direction,
-            "timeframe": trend.timeframe,
-            "sma_20": trend.sma_20,
-            "sma_50": trend.sma_50,
-            "description": trend.description,
-        }
-
-        # 15분봉 방향 필터: 반대 방향이면 HOLD
-        mtf_filter = await _check_mtf_direction(
-            session, market, signal_result.signal_type,
-        )
-        combined_indicators["mtf_filter"] = mtf_filter
-
-        if mtf_filter.get("conflict"):
-            signal_result = SignalResult(
-                "HOLD", 0.0,
-                signal_result.reasons
-                + [f"⚠️ 15분봉 반대 방향 ({mtf_filter['detail']}) — 보류"],
-            )
-        else:
-            # 1시간봉 동의 시 부스트, 반대 시 감쇠
-            if mtf_filter.get("1h_agree"):
-                boosted = min(signal_result.confidence * 1.1, 1.0)
-                signal_result = SignalResult(
-                    signal_result.signal_type, round(boosted, 4),
-                    signal_result.reasons
-                    + [f"✅ 1시간봉 동의 — 신뢰도 부스트 {signal_result.confidence:.1%}→{boosted:.1%}"],
-                )
-            elif mtf_filter.get("1h_oppose"):
-                dampened = signal_result.confidence * 0.85
-                signal_result = SignalResult(
-                    signal_result.signal_type, round(dampened, 4),
-                    signal_result.reasons
-                    + [f"⚠️ 1시간봉 반대 — 신뢰도 감쇠 {signal_result.confidence:.1%}→{dampened:.1%}"],
-                )
-
-            # 상위 추세 하락 중 매수 → HOLD
-            if signal_result.signal_type == "BUY" and trend.direction == "DOWN":
-                signal_result = SignalResult(
-                    "HOLD", 0.0,
-                    signal_result.reasons
-                    + [f"⚠️ 상위 추세 하락 ({trend.description}) — 매수 보류"],
-                )
-
-    # 하락장 정보: BTC 일봉 < SMA50 여부를 LLM에 전달 (차단하지 않음)
-    if signal_result.signal_type in ("BUY", "SELL"):
-        is_bear = await _check_bear_market(session)
-        combined_indicators["bear_market"] = is_bear
-
-    signal = Signal(
-        market=market,
-        timeframe=timeframe,
-        signal_type=signal_result.signal_type,
-        confidence=signal_result.confidence,
-        indicators=combined_indicators,
-        source="technical",
-    )
-    session.add(signal)
-
-    # BUY/SELL 시그널 → 알림 가능 여부 먼저 확인 후 LLM Job 생성
-    chain_created = False
-    if signal_result.signal_type in ("BUY", "SELL"):
-        action = await check_alert_preview(
-            session, market, timeframe,
-            signal_type=signal_result.signal_type,
-        )
-        if action in (AlertAction.SKIP, AlertAction.PASSED):
-            logger.info(
-                "LLM 호출 생략 (alert %s): %s %s %s",
-                action, market, timeframe, signal_result.signal_type,
-            )
-        else:
-            llm_job = Job(
-                type="analyze_local_llm",
-                status=JobStatus.Ready.value,
-                content={
-                    "market": market,
-                    "timeframe": timeframe,
-                    "close_price": close_price,
-                    "indicators": combined_indicators,
-                    "technical_signal": signal_result.signal_type,
-                    "technical_reasons": signal_result.reasons,
-                    "candle_count": len(candles),
-                },
-                priority=15,
-            )
-            session.add(llm_job)
-            chain_created = True
-
-    return {
-        "status": "ok",
-        "candle_count": len(candles),
-        "signal_type": signal_result.signal_type,
-        "confidence": signal_result.confidence,
-        "reasons": signal_result.reasons,
-        "indicators": snap.to_dict(),
-        "llm_chain": chain_created,
-    }
 
 
 async def handle_analyze_technical(
@@ -288,20 +33,12 @@ async def handle_analyze_technical(
     *,
     session: AsyncSession,
 ) -> None:
-    if not job.content or not str(job.content.get("market", "")).strip():
-        raise ValueError("analyze_technical 잡에 content.market 이 필요합니다.")
-    market = str(job.content["market"]).strip()
-    timeframe = str(job.content.get("timeframe", "1m"))
-    ref_timeframes: list[str] = []
-    ref_tf_str = settings.candle_ref_timeframes
-    if ref_tf_str.strip():
-        ref_timeframes = [tf.strip() for tf in ref_tf_str.split(",") if tf.strip()]
-    pat_markets = [m.strip() for m in settings.pattern_markets.split(",") if m.strip()]
-    result = await _run_technical_analysis(
-        session, market, timeframe, settings=settings,
-        ref_timeframes=ref_timeframes, pattern_markets=pat_markets,
+    """레거시 호환용. strategy_scheduler로 이관됨."""
+    logger.warning(
+        "analyze_technical job은 더 이상 사용되지 않습니다 (job_id=%s)",
+        job.id,
     )
-    job.response = result
+    job.response = {"status": "deprecated", "reason": "moved to strategy_scheduler"}
     job.status = JobStatus.Complete.value
 
 
@@ -333,7 +70,7 @@ async def handle_analyze_local_llm(
     # DeepSeek 우선 시도 → 실패 시 Ollama 폴백
     if settings.deepseek_api_key:
         try:
-            from ai_engine.deepseek_llm import query_deepseek
+            from core.strategy.llm.deepseek_llm import query_deepseek
 
             llm_result = await query_deepseek(
                 prompt,
@@ -347,7 +84,7 @@ async def handle_analyze_local_llm(
             logger.warning("DeepSeek API 실패, Ollama 폴백", exc_info=True)
 
     if llm_result is None:
-        from ai_engine.local_llm import query_ollama
+        from core.strategy.llm.local_llm import query_ollama
 
         llm_result = await query_ollama(
             prompt,
@@ -497,7 +234,7 @@ async def handle_analyze_local_llm(
     sell_rec_pct = 0
     sell_choices = None
     if llm_result.decision == "SELL":
-        from executor.position_sizing import calculate_sell_recommendation
+        from core.strategy.executor.position_sizing import calculate_sell_recommendation
 
         pat_list = None
         if indicators and isinstance(indicators.get("patterns"), dict):
@@ -524,7 +261,7 @@ async def handle_analyze_local_llm(
     # 섀도우 트레이딩 (자동화 가정 가상 매매 기록)
     if llm_result.decision in ("BUY", "SELL") and session is not None:
         try:
-            from services.shadow_service import record_shadow_trade
+            from core.shadow.shadow_service import record_shadow_trade
             await record_shadow_trade(
                 session,
                 market=market,

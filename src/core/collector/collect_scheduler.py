@@ -1,7 +1,6 @@
-"""통합 스케줄러 — 캔들 수집, 일봉 수집/판정, 리포트 전송을 단일 루프로 관리.
+"""수집 스케줄러 — 캔들 수집, 일봉 수집/판정, 리포트 전송을 단일 루프로 관리.
 
-기존 3개 독립 스케줄러(candle_scheduler, daily_candle_scheduler, report_scheduler)를
-하나의 asyncio 루프로 통합. 가장 가까운 태스크까지 sleep → 실행 → 다음 시각 재계산.
+가장 가까운 태스크까지 sleep → 실행 → 다음 시각 재계산.
 """
 
 from __future__ import annotations
@@ -55,22 +54,22 @@ async def _tick_candle(
     settings: Settings,
 ) -> None:
     """캔들 수집 Job 생성 (분석TF + 참조TF)."""
-    from collector.scheduler import (
+    from services.candle_service import (
         _LABEL_TO_UNIT,
-        _active_markets,
-        _create_candle_jobs,
+        active_markets,
+        create_candle_jobs,
     )
 
     unit = settings.candle_unit
     count = settings.candle_count
 
     async with session_factory() as session:
-        markets = await _active_markets(session)
+        markets = await active_markets(session)
         if not markets:
             logger.debug("scheduler/candle: no active markets, skip")
             return
 
-        created = await _create_candle_jobs(session, markets, unit, count)
+        created = await create_candle_jobs(session, markets, unit, count)
         logger.info(
             "scheduler/candle: created %d jobs for %d markets",
             created, len(markets),
@@ -82,7 +81,7 @@ async def _tick_candle(
                 tf_label = tf_label.strip()
                 ref_unit = _LABEL_TO_UNIT.get(tf_label)
                 if ref_unit and ref_unit != unit:
-                    ref_created = await _create_candle_jobs(
+                    ref_created = await create_candle_jobs(
                         session, markets, ref_unit, count, ref_only=True,
                     )
                     logger.info(
@@ -95,23 +94,22 @@ async def _tick_daily(
     session_factory: async_sessionmaker[AsyncSession],
     settings: Settings,
 ) -> None:
-    """일봉 수집 + 패턴 적중률 판정 + Job 정리."""
-    from collector.daily_scheduler import (
-        _active_markets,
-        _cleanup_old_jobs,
-        _collect_latest_daily,
-        _sync_pattern_cache,
-        _update_indicator_weights,
-    )
+    """일봉 수집 Job 생성 + 패턴 적중률 판정 + 지표 튜닝 + Job 정리."""
+    from services.candle_service import active_markets, create_candle_jobs
+    from core.strategy.tuning.pattern_cache import sync_pattern_cache
+    from core.strategy.tuning.weight_tuning import update_indicator_weights
+    from services.job_cleanup import cleanup_old_jobs
     from services.pattern_service import evaluate_pending_signals
 
     async with session_factory() as session:
-        markets = await _active_markets(session)
+        markets = await active_markets(session)
         if markets:
-            total = await _collect_latest_daily(session, settings, markets)
+            # 일봉 수집을 Job으로 (unit=1440 → /v1/candles/days)
+            created = await create_candle_jobs(
+                session, markets, unit=1440, count=2, ref_only=True,
+            )
             logger.info(
-                "scheduler/daily: collected %d daily candles for %d markets",
-                total, len(markets),
+                "scheduler/daily: created %d daily candle jobs", created,
             )
 
         # 패턴 적중률 판정 (7일 전 시그널)
@@ -129,60 +127,52 @@ async def _tick_daily(
                     "scheduler/daily: pattern eval %d evaluated, %d hit",
                     eval_result["evaluated"], eval_result["hit"],
                 )
-                await _sync_pattern_cache(session)
+                await sync_pattern_cache(session)
         except Exception:
             logger.exception("scheduler/daily: pattern evaluation failed")
 
         # 지표 가중치 적응형 갱신
         try:
-            weight_result = await _update_indicator_weights(session)
+            weight_result = await update_indicator_weights(session)
             logger.info("scheduler/daily: indicator weights %s", weight_result)
         except Exception:
             logger.exception("scheduler/daily: indicator weight update failed")
 
-        await _cleanup_old_jobs(session)
+        await cleanup_old_jobs(session)
 
 
 async def _tick_report(
     session_factory: async_sessionmaker[AsyncSession],
     settings: Settings,
 ) -> None:
-    """수익률 리포트 생성 + 텔레그램 전송."""
-    from services.report_scheduler import _fetch_balances
-    from services.report_service import generate_report
-    from telegram.bot import send_message
+    """리포트 생성 Job 생성."""
+    from models.job import Job
+    from models.job_status import JobStatus
 
-    token = settings.telegram_bot_token
-    chat_id = settings.telegram_chat_id
-    if not (token and chat_id):
-        return
-
-    accounts, ticker_prices = await _fetch_balances(settings)
     async with session_factory() as session:
-        report_text = await generate_report(
-            session, accounts=accounts, ticker_prices=ticker_prices,
+        job = Job(
+            type="generate_report",
+            status=JobStatus.Ready.value,
+            content={},
+            priority=5,
         )
+        session.add(job)
         await session.commit()
-
-    await send_message(token, chat_id, report_text)
-    logger.info("scheduler/report: 리포트 전송 완료")
+    logger.info("scheduler/report: generate_report job created")
 
 
 async def _run_startup(
     session_factory: async_sessionmaker[AsyncSession],
     settings: Settings,
 ) -> None:
-    """서버 기동 시 1회 실행: 패턴 캐시 동기화 + 일봉 백필."""
-    from collector.daily_scheduler import (
-        _active_markets,
-        _backfill_market,
-        _sync_pattern_cache,
-    )
-    from models.indicator_weight import IndicatorWeight  # noqa: F811
+    """서버 기동 시 1회 실행: 패턴 캐시 동기화 + 지표 캐시 + 일봉 백필."""
+    from services.candle_service import active_markets, backfill_market
+    from core.strategy.tuning.pattern_cache import sync_pattern_cache
+    from models.indicator_weight import IndicatorWeight
 
     async def _sync_indicator_weights(sess: AsyncSession) -> None:
         """DB indicator_weights → 메모리 캐시 동기화."""
-        from analysis.signal_weights import Weight, set_weights_cache
+        from core.analysis.signal_weights import Weight, set_weights_cache
 
         rows = (await sess.execute(
             select(IndicatorWeight)
@@ -202,34 +192,36 @@ async def _run_startup(
         logger.info("indicator weights cache synced: %d records", len(rows))
 
     async with session_factory() as session:
-        await _sync_pattern_cache(session)
+        await sync_pattern_cache(session)
         await _sync_indicator_weights(session)
-        markets = await _active_markets(session)
+        markets = await active_markets(session)
         for market in markets:
             try:
-                await _backfill_market(session, settings, market)
+                await backfill_market(session, settings, market)
             except Exception:
-                logger.exception("scheduler/startup: backfill failed: %s", market)
+                logger.exception(
+                    "scheduler/startup: backfill failed: %s", market,
+                )
 
 
 # ---------------------------------------------------------------------------
 # 메인 루프
 # ---------------------------------------------------------------------------
 
-async def unified_scheduler(
+async def collect_scheduler(
     session_factory: async_sessionmaker[AsyncSession],
     settings: Settings,
 ) -> None:
-    """통합 스케줄러 메인 루프.
+    """수집 스케줄러 메인 루프.
 
     세 가지 태스크의 다음 실행 시각을 관리하고,
     가장 가까운 시각까지 sleep한 뒤 해당 태스크를 실행한다.
     """
-    logger.info("unified_scheduler: starting (startup tasks)")
+    logger.info("collect_scheduler: starting (startup tasks)")
     try:
         await _run_startup(session_factory, settings)
     except Exception:
-        logger.exception("unified_scheduler: startup failed, continuing")
+        logger.exception("collect_scheduler: startup failed, continuing")
 
     interval = settings.candle_interval_sec
     now = datetime.now(UTC)
@@ -239,7 +231,8 @@ async def unified_scheduler(
     next_report = _next_report_target()
 
     logger.info(
-        "unified_scheduler: started (candle=%.0fs, daily=00:05 KST, report=09/21 KST)",
+        "collect_scheduler: started "
+        "(candle=%.0fs, daily=00:05 KST, report=09/21 KST)",
         interval,
     )
 
@@ -258,24 +251,24 @@ async def unified_scheduler(
                 try:
                     await _tick_candle(session_factory, settings)
                 except Exception:
-                    logger.exception("unified_scheduler: candle tick error")
+                    logger.exception("collect_scheduler: candle tick error")
                 next_candle = datetime.now(UTC) + timedelta(seconds=interval)
 
             if now >= next_daily:
                 try:
                     await _tick_daily(session_factory, settings)
                 except Exception:
-                    logger.exception("unified_scheduler: daily tick error")
+                    logger.exception("collect_scheduler: daily tick error")
                 next_daily = _next_kst_target(0, 5)
 
             if now >= next_report:
                 try:
                     await _tick_report(session_factory, settings)
                 except Exception:
-                    logger.exception("unified_scheduler: report tick error")
+                    logger.exception("collect_scheduler: report tick error")
                 next_report = _next_report_target()
 
     except asyncio.CancelledError:
         pass
     finally:
-        logger.info("unified_scheduler stopped")
+        logger.info("collect_scheduler stopped")

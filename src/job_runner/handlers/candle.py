@@ -21,19 +21,29 @@ from utils.config import Settings
 _UNIT_TO_TIMEFRAME = {
     1: "1m", 3: "3m", 5: "5m", 10: "10m",
     15: "15m", 30: "30m", 60: "1h", 240: "4h",
+    1440: "1d",
 }
 
 
-def _candles_minutes_sync(
+def _candles_sync(
     settings: Settings, unit: int, market: str, count: int, to: str | None,
 ) -> list[dict[str, Any]]:
+    """분봉/일봉 캔들 API 동기 호출. unit=1440이면 일봉 엔드포인트 사용."""
     params: dict[str, Any] = {"market": market, "count": count}
     if to is not None:
         params["to"] = to
+
+    if unit == 1440:
+        endpoint = "/v1/candles/days"
+    else:
+        endpoint = f"/v1/candles/minutes/{unit}"
+
     with PublicRequester(settings) as pub:
-        data = pub.request("GET", f"/v1/candles/minutes/{unit}", params=params)
+        data = pub.request("GET", endpoint, params=params)
     if not isinstance(data, list):
-        raise JobExecutionFailed(f"candles/minutes/{unit} 응답이 리스트가 아닙니다.")
+        raise JobExecutionFailed(
+            f"{endpoint} 응답이 리스트가 아닙니다.",
+        )
     return data
 
 
@@ -96,22 +106,25 @@ async def handle_collect_candles(
     if rate_limiter is not None:
         await rate_limiter.acquire()
     raw = await asyncio.to_thread(
-        _candles_minutes_sync, settings, unit, market, count, to,
+        _candles_sync, settings, unit, market, count, to,
     )
 
     if session is not None:
         upserted = await _upsert_candles(session, raw, timeframe)
         job.response = {"upserted": upserted, "timeframe": timeframe}
         ref_only = bool(job.content.get("ref_only", False))
-        # 수집 완료 → analyze_technical Job 자동 생성 (참조 TF는 제외)
-        if not ref_only:
-            analyze_job = Job(
-                type="analyze_technical",
-                status=JobStatus.Ready.value,
-                content={"market": market, "timeframe": timeframe},
-                priority=20,
-            )
-            session.add(analyze_job)
+        # 수집 완료 → compute_indicators Job 자동 생성 (모든 TF)
+        compute_job = Job(
+            type="compute_indicators",
+            status=JobStatus.Ready.value,
+            content={
+                "market": market,
+                "timeframe": timeframe,
+                "ref_only": ref_only,
+            },
+            priority=15,
+        )
+        session.add(compute_job)
     else:
         job.response = {"candles": raw, "timeframe": timeframe}
     job.status = JobStatus.Complete.value

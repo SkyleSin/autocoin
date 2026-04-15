@@ -3,13 +3,13 @@ from __future__ import annotations
 
 import pandas as pd
 
-from analysis.pattern_helpers import (
+from .pattern_helpers import (
     check_min_max_distance,
     check_volume,
     has_prior_downtrend,
     has_prior_uptrend,
 )
-from analysis.pattern_utils import PatternMatch, find_peaks, find_valleys, similar
+from .pattern_utils import PatternMatch, find_peaks, find_valleys, similar
 
 
 def detect_double_top(

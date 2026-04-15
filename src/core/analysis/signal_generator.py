@@ -11,9 +11,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from analysis.indicators import IndicatorSnapshot
-from analysis.signal_weights import Weight, bayesian_combine, get_weights
-from analysis.support_resistance import SRAnalysis
+from .indicators import IndicatorSnapshot
+from .signal_weights import bayesian_combine, get_weights
+from .support_resistance import SRAnalysis
 
 # 거래량 확인 기준
 _VOLUME_CONFIRM_RATIO = 1.5

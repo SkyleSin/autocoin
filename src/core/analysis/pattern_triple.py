@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import pandas as pd
 
-from analysis.pattern_helpers import check_volume
-from analysis.pattern_utils import PatternMatch, find_peaks, find_valleys, similar
+from .pattern_helpers import check_volume
+from .pattern_utils import PatternMatch, find_peaks, find_valleys, similar
 
 
 def detect_triple_top(

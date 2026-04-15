@@ -10,7 +10,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from ai_engine.emergency_prompt import build_emergency_prompt
+from core.strategy.llm.emergency_prompt import build_emergency_prompt
 from models.job import Job
 from models.job_status import JobStatus
 from models.signal import Signal
@@ -72,7 +72,7 @@ async def _call_emergency_llm(
 
     if settings.deepseek_api_key:
         try:
-            from ai_engine.deepseek_llm import query_deepseek
+            from core.strategy.llm.deepseek_llm import query_deepseek
             result = await query_deepseek(
                 prompt,
                 api_key=settings.deepseek_api_key,
@@ -84,7 +84,7 @@ async def _call_emergency_llm(
             logger.warning("긴급판단: DeepSeek 실패, Ollama 폴백", exc_info=True)
 
     if result is None:
-        from ai_engine.local_llm import query_ollama
+        from core.strategy.llm.local_llm import query_ollama
         result = await query_ollama(
             prompt,
             base_url=settings.ollama_base_url,

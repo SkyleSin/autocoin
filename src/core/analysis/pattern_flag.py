@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import pandas as pd
 
-from analysis.pattern_helpers import fit_trendline
-from analysis.pattern_utils import PatternMatch
+from .pattern_helpers import fit_trendline
+from .pattern_utils import PatternMatch
 
 _MIN_POLE_PCT, _MAX_POLE_BARS = 1.5, 15
 _MIN_FLAG_BARS, _MAX_FLAG_RATIO = 3, 5.0

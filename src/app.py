@@ -15,12 +15,14 @@ from fastapi import FastAPI
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from core.collector.collect_scheduler import collect_scheduler
 from job_runner.poller import SHUTDOWN_QUEUE_ITEM, JobQueueItem, poller
 from job_runner.rate_limit import AsyncSlidingWindowRateLimiter
 from job_runner.worker import worker as job_worker
 from models.active_alert import ActiveAlert
 from models.app_config import AppConfig
 from models.candle import Candle
+from models.indicator_snapshot import IndicatorSnapshot
 from models.job import Job
 from models.job_status import JobStatus
 from models.pattern_accuracy import PatternAccuracy
@@ -34,7 +36,6 @@ from routers.jobs import router as jobs_router
 from services.config_service import load_risk_settings
 from telegram.bot import send_message
 from telegram.poller import telegram_poller
-from unified_scheduler import unified_scheduler
 from utils.config import Settings
 from utils.logging_setup import setup_logging
 
@@ -77,6 +78,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 PatternEvaluation.__table__,
                 ShadowTrade.__table__,
                 ShadowPortfolio.__table__,
+                IndicatorSnapshot.__table__,
             ):
                 await conn.run_sync(
                     lambda sync_conn, t=table: t.create(sync_conn, checkfirst=True),
@@ -117,6 +119,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         app.state.bithumb_api_rate_limiter = api_rate_limiter
 
+        # strategy_queue: compute_indicators 완료 → 전략 실행
+        from core.strategy.strategy_scheduler import StrategyEvent, strategy_scheduler
+        from job_runner.handlers.indicators import set_strategy_queue
+
+        strategy_queue: asyncio.Queue[StrategyEvent] = asyncio.Queue()
+        set_strategy_queue(strategy_queue)
+
+        strategy_task = asyncio.create_task(
+            strategy_scheduler(strategy_queue, session_factory, settings),
+            name="strategy-scheduler",
+        )
+
         job_queue: asyncio.PriorityQueue[JobQueueItem] = asyncio.PriorityQueue()
         poller_task = asyncio.create_task(
             poller(job_queue, session_factory, settings),
@@ -136,7 +150,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             for i in range(settings.job_worker_count)
         ]
         scheduler_task = asyncio.create_task(
-            unified_scheduler(session_factory, settings),
+            collect_scheduler(session_factory, settings),
             name="unified-scheduler",
         )
         telegram_poller_task = asyncio.create_task(
@@ -144,16 +158,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             name="telegram-poller",
         )
 
-        from safety.monitor import safety_monitor
+        from core.safety.monitor import safety_monitor
         safety_monitor_task = asyncio.create_task(
             safety_monitor(session_factory, settings),
             name="safety-monitor",
         )
 
         app.state.job_queue = job_queue
+        app.state.strategy_queue = strategy_queue
         app.state.job_poller_task = poller_task
         app.state.job_worker_tasks = worker_tasks
         app.state.scheduler_task = scheduler_task
+        app.state.strategy_task = strategy_task
         app.state.telegram_poller_task = telegram_poller_task
         app.state.safety_monitor_task = safety_monitor_task
         logger.info(
@@ -177,7 +193,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         safety_monitor_task.cancel()
         await asyncio.gather(safety_monitor_task, return_exceptions=True)
 
-        logger.info("lifespan: stop unified_scheduler")
+        logger.info("lifespan: stop strategy_scheduler")
+        strategy_task.cancel()
+        await asyncio.gather(strategy_task, return_exceptions=True)
+
+        logger.info("lifespan: stop collect_scheduler")
         scheduler_task.cancel()
         await asyncio.gather(scheduler_task, return_exceptions=True)
 

@@ -7,8 +7,8 @@ from __future__ import annotations
 
 import pandas as pd
 
-from analysis.pattern_helpers import check_volume, fit_trendline
-from analysis.pattern_utils import PatternMatch
+from .pattern_helpers import check_volume, fit_trendline
+from .pattern_utils import PatternMatch
 
 
 def detect_bullish_continuation(

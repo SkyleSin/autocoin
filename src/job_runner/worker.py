@@ -16,6 +16,8 @@ from job_runner.handlers.bithumb import (
     handle_bithumb_ticker,
 )
 from job_runner.handlers.candle import handle_collect_candles
+from job_runner.handlers.indicators import handle_compute_indicators
+from job_runner.handlers.report import handle_generate_report
 from job_runner.handlers.trade import (
     handle_cancel_order,
     handle_check_balance,
@@ -68,6 +70,10 @@ async def _execute_job(
         await handle_bithumb_orders_chance(job, settings, rate_limiter=rl)
     elif job.type == "collect_candles":
         await handle_collect_candles(job, settings, rate_limiter=rl, session=session)
+    elif job.type == "compute_indicators":
+        if session is None:
+            raise ValueError("compute_indicators 잡은 DB 세션이 필요합니다.")
+        await handle_compute_indicators(job, settings, session=session)
     elif job.type == "analyze_technical":
         if session is None:
             raise ValueError("analyze_technical 잡은 DB 세션이 필요합니다.")
@@ -82,6 +88,10 @@ async def _execute_job(
         await handle_place_order(job, settings, rate_limiter=rl, session=session)
     elif job.type == "check_order":
         await handle_check_order(job, settings, rate_limiter=rl, session=session)
+    elif job.type == "generate_report":
+        if session is None:
+            raise ValueError("generate_report 잡은 DB 세션이 필요합니다.")
+        await handle_generate_report(job, settings, rate_limiter=rl, session=session)
     elif job.type == "cancel_order":
         await handle_cancel_order(job, settings, rate_limiter=rl, session=session)
     else:

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pandas as pd
 
-from analysis.pattern_helpers import check_volume, slope_pct
-from analysis.pattern_utils import PatternMatch, Trendline
+from .pattern_helpers import check_volume, slope_pct
+from .pattern_utils import PatternMatch, Trendline
 
 # 타임프레임별 수평 판정 임계값 (봉당 가격변동률 %)
 _FLAT_THRESHOLDS = {"1d": 0.03, "4h": 0.02, "1h": 0.015, "15m": 0.01, "5m": 0.008}

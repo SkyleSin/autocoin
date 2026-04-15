@@ -8,9 +8,10 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from executor.risk_manager import check_risk
 from models.trade import Trade
 from utils.config import Settings
+
+from .risk_manager import check_risk
 
 logger = logging.getLogger(__name__)
 

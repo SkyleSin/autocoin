@@ -1,6 +1,6 @@
 """리포트 유틸 — 잔고/현재가 조회 헬퍼.
 
-스케줄 루프는 unified_scheduler.py에서 관리.
+스케줄 루프는 collect_scheduler.py에서 관리.
 """
 
 from __future__ import annotations

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from analysis.pattern_utils import Trendline
+from .pattern_utils import Trendline
 
 
 def order_for_timeframe(timeframe: str) -> int:
