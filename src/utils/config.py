@@ -141,6 +141,38 @@ class Settings(BaseSettings):
         validation_alias="AUTOCOIN_SAFETY_COOLDOWN_SEC",
     )
 
+    # 뉴스 충격 감지 모니터
+    shock_monitor_interval_sec: float = Field(
+        default=60.0,
+        description="충격 감지 감시 주기(초).",
+        validation_alias="AUTOCOIN_SHOCK_INTERVAL_SEC",
+    )
+    shock_volume_threshold: float = Field(
+        default=3.0,
+        description="거래량 급등 임계값 (평소 대비 배수).",
+        validation_alias="AUTOCOIN_SHOCK_VOLUME_THRESHOLD",
+    )
+    shock_volatility_threshold: float = Field(
+        default=2.0,
+        description="변동성 급등 임계값 (평소 대비 배수).",
+        validation_alias="AUTOCOIN_SHOCK_VOLATILITY_THRESHOLD",
+    )
+    shock_gap_threshold_pct: float = Field(
+        default=2.0,
+        description="가격 갭 임계값 (%).",
+        validation_alias="AUTOCOIN_SHOCK_GAP_PCT",
+    )
+    shock_panic_gap_pct: float = Field(
+        default=5.0,
+        description="패닉 갭 임계값 (%).",
+        validation_alias="AUTOCOIN_SHOCK_PANIC_GAP_PCT",
+    )
+    shock_cooldown_sec: float = Field(
+        default=600.0,
+        description="동일 마켓 충격 감지 쿨다운(초).",
+        validation_alias="AUTOCOIN_SHOCK_COOLDOWN_SEC",
+    )
+
     candle_interval_sec: float = Field(
         default=900.0,
         description="캔들 수집 주기(초). 15분봉 기준 900.",

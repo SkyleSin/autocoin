@@ -28,7 +28,6 @@ from .topdown_indicators_bb import (
     chk_rsi_lt40,
     chk_rsi_lt45,
     chk_rsi_lt50,
-    chk_vol_low,
 )
 from .topdown_indicators_ma import (
     chk_ema12_above_ema26,
@@ -59,7 +58,6 @@ SELL_4H = [
     ("macd_hist_감소중", 0.49, chk_macd_hist_falling),
     ("price<sma20", 0.30, chk_price_below_sma20),
     ("price<sma50", 0.28, chk_price_below_sma50),
-    ("vol<0.5x", 0.22, chk_vol_low),
 ]
 
 # ── 1H: 신뢰도 부스트 (4H 방향과 같은 방향 지표만 사용) ──
@@ -93,6 +91,98 @@ TRIGGER_SELL_15M = [
     chk_rsi_gt60,              # RSI>60 (70.6% 적중)
     chk_macd_hist_falling,     # MACD 히스토그램 하락 (62.5% 적중)
 ]
+
+# ── DB 가중치 오버라이드 ──
+# (direction, tf, name) → accuracy 캐시.
+# accuracy → score 변환: score = (accuracy*100 - 50) / 10
+# 예: accuracy 0.667 → score = (66.7-50)/10 = 1.67
+_SCORE_OVERRIDES: dict[tuple[str, str, str], float] = {}
+
+
+def _recalc_max() -> None:
+    """테이블 변경 후 MAX 값 재계산."""
+    global MAX_BUY_4H, MAX_SELL_4H, MAX_BUY_1H, MAX_SELL_1H
+    global MAX_BUY, MAX_SELL
+    MAX_BUY_4H = sum(s for _, s, _ in BUY_4H)
+    MAX_SELL_4H = sum(s for _, s, _ in SELL_4H)
+    MAX_BUY_1H = sum(s for _, s, _ in BUY_1H)
+    MAX_SELL_1H = sum(s for _, s, _ in SELL_1H)
+    MAX_BUY = MAX_BUY_4H + MAX_BUY_1H
+    MAX_SELL = MAX_SELL_4H + MAX_SELL_1H
+
+
+def apply_score_overrides(overrides: dict[tuple[str, str, str], float]) -> int:
+    """DB에서 로드한 가중치를 테이블 점수에 반영.
+
+    Args:
+        overrides: {(direction, tf, name): accuracy, ...}
+
+    Returns:
+        적용된 오버라이드 수
+    """
+    import logging
+    log = logging.getLogger(__name__)
+
+    _SCORE_OVERRIDES.clear()
+    _SCORE_OVERRIDES.update(overrides)
+
+    applied = 0
+    tables = [
+        ("BUY", "4h", BUY_4H),
+        ("SELL", "4h", SELL_4H),
+        ("BUY", "1h", BUY_1H),
+        ("SELL", "1h", SELL_1H),
+    ]
+
+    for direction, tf, table in tables:
+        for i, (name, default_score, fn) in enumerate(table):
+            key = (direction, tf, name)
+            if key in overrides:
+                acc = overrides[key]
+                new_score = round((acc * 100 - 50) / 10, 2)
+                if new_score != default_score:
+                    table[i] = (name, new_score, fn)
+                    log.info(
+                        "topdown score override: %s/%s/%s %.2f → %.2f (acc=%.1f%%)",
+                        tf, direction, name, default_score, new_score, acc * 100,
+                    )
+                    applied += 1
+
+    if applied > 0:
+        _recalc_max()
+        log.info(
+            "topdown MAX recalc: BUY_4H=%.2f SELL_4H=%.2f BUY_1H=%.2f SELL_1H=%.2f",
+            MAX_BUY_4H, MAX_SELL_4H, MAX_BUY_1H, MAX_SELL_1H,
+        )
+
+    return applied
+
+
+async def sync_topdown_weights(session: object) -> int:
+    """DB indicator_weights → 탑다운 테이블 점수 동기화.
+
+    서버 기동 시 + 일일 갱신 후 호출.
+    """
+    from sqlalchemy import select as sa_select
+
+    from models.indicator_weight import IndicatorWeight
+
+    rows = (await session.execute(  # type: ignore[attr-defined]
+        sa_select(IndicatorWeight).where(
+            IndicatorWeight.timeframe.in_(["4h", "1h", "15m"]),
+            IndicatorWeight.is_active.is_(True),
+        )
+    )).scalars().all()
+
+    if not rows:
+        return 0
+
+    overrides: dict[tuple[str, str, str], float] = {}
+    for row in rows:
+        overrides[(row.direction, row.timeframe, row.name)] = row.accuracy
+
+    return apply_score_overrides(overrides)
+
 
 # max possible scores (4H + 1H)
 MAX_BUY_4H = sum(s for _, s, _ in BUY_4H)

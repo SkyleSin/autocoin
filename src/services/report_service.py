@@ -132,7 +132,46 @@ async def generate_report(
             lines.append(f"• *전체*: `{overall:.0f}%` ({hit_all}/{total_all})")
         lines.append("")
 
-    # ── 5. 최근 시그널 현황 ──
+    # ── 5. 탑다운 활성 지표 ──
+    try:
+        from core.strategy.topdown_tables import (
+            BUY_1H,
+            BUY_4H,
+            SELL_1H,
+            SELL_4H,
+            TRIGGER_BUY_15M,
+            TRIGGER_SELL_15M,
+        )
+        lines.append("📊 *탑다운 활성 지표*")
+        lines.append(f"  4H BUY: {len(BUY_4H)}개 | SELL: {len(SELL_4H)}개")
+        lines.append(f"  1H BUY: {len(BUY_1H)}개 | SELL: {len(SELL_1H)}개")
+        lines.append(
+            f"  15m 트리거: BUY {len(TRIGGER_BUY_15M)}개"
+            f" | SELL {len(TRIGGER_SELL_15M)}개"
+        )
+        top3_buy = ", ".join(f"{n}({s:.2f})" for n, s, _ in BUY_4H[:3])
+        top3_sell = ", ".join(f"{n}({s:.2f})" for n, s, _ in SELL_4H[:3])
+        lines.append(f"  Top3 BUY: {top3_buy}")
+        lines.append(f"  Top3 SELL: {top3_sell}")
+
+        # DB 오버라이드 적용 여부
+        from sqlalchemy import func as sa_func
+
+        from models.indicator_weight import IndicatorWeight
+        db_count = (await session.execute(
+            select(sa_func.count()).select_from(IndicatorWeight).where(
+                IndicatorWeight.timeframe.in_(["4h", "1h", "15m"]),
+            )
+        )).scalar() or 0
+        if db_count > 0:
+            lines.append(f"  DB 가중치: {db_count}개 적용 중")
+        else:
+            lines.append("  DB 가중치: 미수집 (백테스트 기본값)")
+        lines.append("")
+    except Exception:
+        pass
+
+    # ── 6. 최근 시그널 현황 ──
     recent_signals = (await session.execute(
         select(Signal).where(
             Signal.source.in_(["deepseek", "local_llm"]),

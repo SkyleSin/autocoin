@@ -95,9 +95,9 @@ async def _tick_daily(
     settings: Settings,
 ) -> None:
     """일봉 수집 Job 생성 + 패턴 적중률 판정 + 지표 튜닝 + Job 정리."""
-    from services.candle_service import active_markets, create_candle_jobs
     from core.strategy.tuning.pattern_cache import sync_pattern_cache
     from core.strategy.tuning.weight_tuning import update_indicator_weights
+    from services.candle_service import active_markets, create_candle_jobs
     from services.job_cleanup import cleanup_old_jobs
     from services.pattern_service import evaluate_pending_signals
 
@@ -138,6 +138,15 @@ async def _tick_daily(
         except Exception:
             logger.exception("scheduler/daily: indicator weight update failed")
 
+        # 탑다운 테이블 점수 DB 동기화
+        try:
+            from core.strategy.topdown_tables import sync_topdown_weights
+            applied = await sync_topdown_weights(session)
+            if applied > 0:
+                logger.info("scheduler/daily: topdown scores synced (%d)", applied)
+        except Exception:
+            logger.exception("scheduler/daily: topdown weight sync failed")
+
         await cleanup_old_jobs(session)
 
 
@@ -166,9 +175,9 @@ async def _run_startup(
     settings: Settings,
 ) -> None:
     """서버 기동 시 1회 실행: 패턴 캐시 동기화 + 지표 캐시 + 일봉 백필."""
-    from services.candle_service import active_markets, backfill_market
     from core.strategy.tuning.pattern_cache import sync_pattern_cache
     from models.indicator_weight import IndicatorWeight
+    from services.candle_service import active_markets, backfill_market
 
     async def _sync_indicator_weights(sess: AsyncSession) -> None:
         """DB indicator_weights → 메모리 캐시 동기화."""
@@ -194,6 +203,16 @@ async def _run_startup(
     async with session_factory() as session:
         await sync_pattern_cache(session)
         await _sync_indicator_weights(session)
+
+        # 탑다운 테이블 점수 DB 동기화
+        try:
+            from core.strategy.topdown_tables import sync_topdown_weights
+            applied = await sync_topdown_weights(session)
+            if applied > 0:
+                logger.info("topdown scores synced on startup: %d", applied)
+        except Exception:
+            logger.exception("startup: topdown weight sync failed")
+
         markets = await active_markets(session)
         for market in markets:
             try:

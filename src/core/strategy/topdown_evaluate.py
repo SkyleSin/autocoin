@@ -29,8 +29,8 @@ logger = logging.getLogger(__name__)
 
 # ── 4H 방향 게이트 파라미터 ──
 _GAP_4H = 0.5          # BUY_4H - SELL_4H >= GAP → 방향 결정
-_THRESHOLD_BUY = 2.0   # 4H BUY 점수 최소값
-_THRESHOLD_SELL = 1.5  # 4H SELL 점수 최소값
+_THRESHOLD_BUY = 2.5   # 4H BUY 점수 최소값 (백테스트 score≥2.5 기준)
+_THRESHOLD_SELL = 1.8  # 4H SELL 점수 최소값 (SELL max=2.9 대비 비례 조정)
 
 # ── 1H 부스트 파라미터 ──
 _BOOST_WEIGHT = 0.4

@@ -23,7 +23,7 @@ from _topdown_tracker import PositionTracker  # noqa: E402
 from bithumb.candle import BithumbCandle  # noqa: E402
 from utils.config import Settings  # noqa: E402
 
-MARKETS = ["KRW-BTC", "KRW-ETH"]
+MARKETS = ["KRW-BTC", "KRW-ETH", "KRW-XRP", "KRW-SOL"]
 MONTHS = 12
 WINDOW = 200
 STEP = 4  # 15분봉 4개 = 1시간마다 평가

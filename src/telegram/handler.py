@@ -57,7 +57,7 @@ async def handle_update(
         await _cmd_assets(token, chat_id, session_factory)
     elif text.startswith("/add "):
         market = text[5:].strip().upper()
-        await _cmd_add_asset(token, chat_id, session_factory, market)
+        await _cmd_add_asset(token, chat_id, session_factory, market, settings)
     elif text.startswith("/rm "):
         market = text[4:].strip().upper()
         await _cmd_remove_asset(token, chat_id, session_factory, market)
@@ -74,6 +74,12 @@ async def handle_update(
         await _cmd_report_detail(token, chat_id, session_factory)
     elif text.startswith("/r") and text.rstrip() in ("/r", "/report"):
         await _cmd_report(token, chat_id, session_factory, settings)
+    elif text.startswith("/todo_done "):
+        await _cmd_todo_done(token, chat_id, session_factory, text[11:].strip())
+    elif text.startswith("/todo_list") or text.rstrip() == "/todos":
+        await _cmd_todo_list(token, chat_id, session_factory)
+    elif text.startswith("/todo "):
+        await _cmd_todo_add(token, chat_id, session_factory, text[6:].strip())
     else:
         await send_message(token, chat_id, "알 수 없는 명령어입니다. /help 를 입력하세요.")
 
@@ -103,7 +109,12 @@ async def _cmd_help(token: str, chat_id: str) -> None:
 
 *리포트:*
 /r — 수익률 + 적중률 리포트
-/rd — 상세 분석 리포트"""
+/rd — 상세 분석 리포트
+
+*메모:*
+/todo 내용 — TODO 추가
+/todos — TODO 목록
+/todo\\_done 번호 — 완료 처리"""
     await send_message(token, chat_id, msg)
 
 
@@ -225,7 +236,8 @@ async def _cmd_assets(
 
 
 async def _cmd_add_asset(
-    token: str, chat_id: str, sf: async_sessionmaker[AsyncSession], market: str,
+    token: str, chat_id: str, sf: async_sessionmaker[AsyncSession],
+    market: str, settings: Settings | None = None,
 ) -> None:
     if not market or "-" not in market:
         await send_message(token, chat_id, "❌ 형식: /add KRW-BTC")
@@ -246,7 +258,21 @@ async def _cmd_add_asset(
         session.add(asset)
         await session.commit()
 
-    await send_message(token, chat_id, f"✅ `{market}` 추적 자산에 추가되었습니다.")
+        # 즉시 백필 (모든 TF: 15m/1h/4h/1d)
+        backfill_msg = ""
+        if settings:
+            try:
+                from services.candle_service import backfill_market
+                upserted = await backfill_market(session, settings, market)
+                if upserted > 0:
+                    backfill_msg = f"\n📊 백필 완료: {upserted}개 캔들 수집"
+            except Exception:
+                backfill_msg = "\n⚠️ 백필 실패 (다음 주기에 수집)"
+
+    await send_message(
+        token, chat_id,
+        f"✅ `{market}` 추적 자산에 추가되었습니다.{backfill_msg}",
+    )
 
 
 async def _cmd_remove_asset(
@@ -741,3 +767,94 @@ async def _answer_callback(token: str, callback_id: str) -> None:
             await client.post(url, json={"callback_query_id": callback_id})
     except Exception:
         logger.warning("콜백 응답 실패", exc_info=True)
+
+
+# ── TODO 명령어 ──
+
+
+async def _cmd_todo_add(
+    token: str, chat_id: str, sf: async_sessionmaker[AsyncSession],
+    content: str,
+) -> None:
+    """TODO 추가."""
+    if not content:
+        await send_message(token, chat_id, "❌ 형식: /todo 내용")
+        return
+
+    from models.todo import Todo
+
+    async with sf() as session:
+        todo = Todo(content=content)
+        session.add(todo)
+        await session.commit()
+
+        # 현재 미완료 건수
+        from sqlalchemy import func
+        cnt = (await session.execute(
+            select(func.count()).select_from(Todo).where(Todo.done.is_(False))
+        )).scalar() or 0
+
+    await send_message(
+        token, chat_id,
+        f"📝 TODO 추가 완료 (미완료 {cnt}건)\n`{content}`",
+    )
+
+
+async def _cmd_todo_list(
+    token: str, chat_id: str, sf: async_sessionmaker[AsyncSession],
+) -> None:
+    """TODO 목록 조회."""
+    from models.todo import Todo
+
+    async with sf() as session:
+        rows = (await session.execute(
+            select(Todo).where(Todo.done.is_(False)).order_by(Todo.created_at)
+        )).scalars().all()
+
+    if not rows:
+        await send_message(token, chat_id, "✅ TODO가 없습니다!")
+        return
+
+    lines = ["📋 *TODO 목록*\n"]
+    for i, t in enumerate(rows, 1):
+        from datetime import timedelta as td
+        kst = t.created_at + td(hours=9)
+        lines.append(f"`{i}.` {t.content} ({kst:%m/%d})")
+    lines.append("\n완료: /todo\\_done 번호")
+    await send_message(token, chat_id, "\n".join(lines))
+
+
+async def _cmd_todo_done(
+    token: str, chat_id: str, sf: async_sessionmaker[AsyncSession],
+    num_str: str,
+) -> None:
+    """TODO 완료 처리."""
+    from models.todo import Todo
+
+    try:
+        num = int(num_str)
+    except ValueError:
+        await send_message(token, chat_id, "❌ 형식: /todo\\_done 번호")
+        return
+
+    async with sf() as session:
+        rows = (await session.execute(
+            select(Todo).where(Todo.done.is_(False)).order_by(Todo.created_at)
+        )).scalars().all()
+
+        if num < 1 or num > len(rows):
+            await send_message(
+                token, chat_id,
+                f"❌ 1~{len(rows)} 범위의 번호를 입력하세요.",
+            )
+            return
+
+        todo = rows[num - 1]
+        todo.done = True
+        content = todo.content
+        await session.commit()
+
+    await send_message(
+        token, chat_id,
+        f"✅ 완료: `{content}`",
+    )

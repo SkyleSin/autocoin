@@ -115,6 +115,16 @@ async def _handle_event(
             result.signal_type, result.confidence,
         )
 
+        # 방어 모드 활성 시 BUY 차단
+        if result.signal_type == "BUY":
+            from core.safety.defense_mode import is_defense_active
+            if is_defense_active(event.market):
+                logger.info(
+                    "strategy: BUY 차단 — 방어 모드 활성: %s", event.market,
+                )
+                await session.commit()
+                return
+
         # BUY/SELL → 알림 가능 여부 확인 후 LLM Job 생성
         if result.signal_type in ("BUY", "SELL"):
             action = await check_alert_preview(

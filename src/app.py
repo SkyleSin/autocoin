@@ -30,6 +30,7 @@ from models.pattern_config import PatternConfig
 from models.pattern_evaluation import PatternEvaluation
 from models.shadow_trade import ShadowPortfolio, ShadowTrade
 from models.signal import Signal
+from models.todo import Todo
 from models.tracked_asset import TrackedAsset
 from models.trade import Trade
 from routers.jobs import router as jobs_router
@@ -79,6 +80,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 ShadowTrade.__table__,
                 ShadowPortfolio.__table__,
                 IndicatorSnapshot.__table__,
+                Todo.__table__,
             ):
                 await conn.run_sync(
                     lambda sync_conn, t=table: t.create(sync_conn, checkfirst=True),
@@ -174,6 +176,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             name="safety-monitor",
         )
 
+        from core.safety.shock_monitor import shock_monitor
+        shock_monitor_task = asyncio.create_task(
+            shock_monitor(session_factory, settings),
+            name="shock-monitor",
+        )
+
         app.state.job_queue = job_queue
         app.state.strategy_queue = strategy_queue
         app.state.job_poller_task = poller_task
@@ -198,6 +206,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await _send_startup_alert(session_factory, settings)
 
         yield
+
+        logger.info("lifespan: stop shock_monitor")
+        shock_monitor_task.cancel()
+        await asyncio.gather(shock_monitor_task, return_exceptions=True)
 
         logger.info("lifespan: stop safety_monitor")
         safety_monitor_task.cancel()

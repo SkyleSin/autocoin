@@ -4,7 +4,7 @@ from __future__ import annotations
 
 # ── 최대 가능 점수 (실제 테이블과 동기화) ──
 MAX_BUY_4H = 1.67 + 1.22 + 1.12 + 0.76 + 0.55 + 0.37 + 0.35 + 0.22 + 0.20
-MAX_SELL_4H = 1.10 + 0.73 + 0.49 + 0.30 + 0.28 + 0.22
+MAX_SELL_4H = 1.10 + 0.73 + 0.49 + 0.30 + 0.28
 MAX_BUY_1H = 0.48 + 0.41 + 0.32 + 0.27 + 0.27
 MAX_SELL_1H = 0.25 + 0.21
 
@@ -46,8 +46,6 @@ def score_4h(snap, sr, close, buy, sell, fired):
         bw = (snap.bb_upper - snap.bb_lower) / snap.bb_middle
         if bw < 0.02:
             buy, sell = a("bb_squeeze", 0.20, "BUY", buy, sell, fired)
-    if snap.volume_ratio is not None and snap.volume_ratio < 0.5:
-        buy, sell = a("vol<0.5x", 0.22, "SELL", buy, sell, fired)
     if sr is not None:
         if sr.signal == "SUPPORT_BOUNCE":
             buy, sell = a("sr_지지반등", 1.67, "BUY", buy, sell, fired)
