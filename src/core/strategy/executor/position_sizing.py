@@ -54,6 +54,18 @@ SELL_PATTERN_RECOMMENDATION = _FALLBACK_SELL_REC
 MIN_ALLOCATION_PCT = 3.0    # 절대 하한 (매수용)
 
 
+def _get_indicator(indicators: dict[str, Any], key: str) -> float | None:
+    """flat 또는 탑다운 layer 구조에서 지표값 추출."""
+    val = indicators.get(key)
+    if val is not None:
+        return float(val)
+    # 탑다운: layer_15m.indicators에서 시도
+    layer_15m = indicators.get("layer_15m", {})
+    ind = layer_15m.get("indicators", {}) if isinstance(layer_15m, dict) else {}
+    val = ind.get(key)
+    return float(val) if val is not None else None
+
+
 @dataclass(frozen=True)
 class PositionSize:
     """포지션 사이징 결과."""
@@ -117,7 +129,7 @@ def calculate_position(
 
     # 3) RSI 기반 조절
     if indicators:
-        rsi = indicators.get("rsi_14")
+        rsi = _get_indicator(indicators, "rsi_14")
         if rsi is not None:
             if rsi < 20:
                 adjusted_pct *= 1.2
@@ -131,9 +143,9 @@ def calculate_position(
 
     # 4) 볼린저밴드 위치 조절
     if indicators:
-        bb_upper = indicators.get("bb_upper")
-        bb_lower = indicators.get("bb_lower")
-        bb_middle = indicators.get("bb_middle")
+        bb_upper = _get_indicator(indicators, "bb_upper")
+        bb_lower = _get_indicator(indicators, "bb_lower")
+        bb_middle = _get_indicator(indicators, "bb_middle")
         if bb_upper and bb_lower and bb_middle:
             bb_width = (bb_upper - bb_lower) / bb_middle * 100
             if bb_width < 1.0:

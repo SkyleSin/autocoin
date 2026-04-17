@@ -323,7 +323,7 @@ async def _update_topdown_weights(session: AsyncSession) -> int:
     for sig in topdown_signals:
         eval_result = _evaluate_signal_quality(sig)
         if eval_result is None:
-            eval_result = await _fallback_evaluate(session, sig, "4h")
+            eval_result = await _fallback_evaluate(session, sig, "15m")
         if eval_result is None:
             continue
 

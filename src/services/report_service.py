@@ -174,7 +174,7 @@ async def generate_report(
     # ── 6. 최근 시그널 현황 ──
     recent_signals = (await session.execute(
         select(Signal).where(
-            Signal.source.in_(["deepseek", "local_llm"]),
+            Signal.source.in_(["technical", "deepseek", "local_llm"]),
             Signal.signal_type.in_(["BUY", "SELL"]),
             Signal.created_at >= now - timedelta(hours=24),
         ).order_by(Signal.created_at.desc()).limit(10)
@@ -186,7 +186,8 @@ async def generate_report(
             kst = s.created_at + timedelta(hours=9)
             emoji = "🟢" if s.signal_type == "BUY" else "🔴"
             verified_mark = "✅" if s.verified else "⏳"
-            src_label = "[DS]" if s.source == "deepseek" else "[OL]"
+            _src_map = {"technical": "[TD]", "deepseek": "[DS]", "local_llm": "[OL]"}
+            src_label = _src_map.get(s.source, f"[{s.source}]")
             lines.append(
                 f"• {emoji} {s.market} {s.signal_type} "
                 f"({kst:%H:%M}) {src_label} {verified_mark}"
@@ -222,7 +223,7 @@ async def generate_report(
 
 
 async def generate_detail_report(session: AsyncSession) -> list[str]:
-    """LLM 판단 상세 리포트 — 메시지 분할 반환.
+    """시그널 상세 리포트 — 메시지 분할 반환.
 
     Returns:
         list[str]: 텔레그램 메시지 목록 (각 4096자 이내)
@@ -292,7 +293,7 @@ async def generate_detail_report(session: AsyncSession) -> list[str]:
         SELECT
             to_char(s.created_at AT TIME ZONE 'Asia/Seoul', 'MM/DD HH24:MI') as kst,
             REPLACE(s.market, 'KRW-', '') as coin,
-            COALESCE(s.indicators->'patterns'->'patterns'->0->>'name_ko', '-') as pattern,
+            COALESCE(s.indicators->'patterns'->'patterns'->0->>'name_ko', '-') as pat,
             COALESCE(
                 s.indicators->'patterns'->'patterns'->0->>'confidence', ''
             ) as pat_conf,
@@ -300,22 +301,42 @@ async def generate_detail_report(session: AsyncSession) -> list[str]:
             s.confidence as conf,
             sp.signal_price,
             fp.future_price,
-            s.indicators->>'rsi_14' as rsi,
-            s.indicators->>'macd_histogram' as macd_h,
+            COALESCE(
+                s.indicators->>'rsi_14',
+                s.indicators->'layer_15m'->'indicators'->>'rsi_14'
+            ) as rsi,
+            COALESCE(
+                s.indicators->>'macd_histogram',
+                s.indicators->'layer_15m'->'indicators'->>'macd_histogram'
+            ) as macd_h,
             s.indicators->'support_resistance'->>'signal' as sr_sig,
             s.indicators->'support_resistance'->>'nearest_support' as sup,
             s.indicators->'support_resistance'->>'nearest_resistance' as res,
-            s.indicators->>'bb_upper' as bb_upper,
-            s.indicators->>'bb_lower' as bb_lower,
+            COALESCE(
+                s.indicators->>'bb_upper',
+                s.indicators->'layer_15m'->'indicators'->>'bb_upper'
+            ) as bb_upper,
+            COALESCE(
+                s.indicators->>'bb_lower',
+                s.indicators->'layer_15m'->'indicators'->>'bb_lower'
+            ) as bb_lower,
             s.indicators->'higher_trend'->>'direction' as trend_dir,
             s.indicators->'higher_trend'->>'timeframe' as trend_tf,
-            s.indicators->>'volume_ratio' as vol_ratio,
+            COALESCE(
+                s.indicators->>'volume_ratio',
+                s.indicators->'layer_15m'->'indicators'->>'volume_ratio'
+            ) as vol_ratio,
             s.source as llm_source,
-            COALESCE(s.indicators->>'llm_reason', '') as llm_reason
+            COALESCE(
+                s.indicators->>'llm_reason',
+                s.indicators->>'tech_reasons',
+                ''
+            ) as llm_reason
         FROM signals s
         LEFT JOIN LATERAL (
             SELECT c.close as signal_price FROM candles c
-            WHERE c.market = s.market AND c.timeframe IN ('5m','15m') AND c.open_at <= s.created_at
+            WHERE c.market = s.market AND c.timeframe IN ('5m','15m')
+              AND c.open_at <= s.created_at
             ORDER BY c.open_at DESC LIMIT 1
         ) sp ON true
         LEFT JOIN LATERAL (
@@ -324,7 +345,8 @@ async def generate_detail_report(session: AsyncSession) -> list[str]:
             AND c.open_at >= s.created_at + interval '4 hours'
             ORDER BY c.open_at ASC LIMIT 1
         ) fp ON true
-        WHERE s.source IN ('deepseek', 'local_llm')
+        WHERE s.source IN ('technical', 'deepseek', 'local_llm')
+          AND s.signal_type IN ('BUY', 'SELL')
         ORDER BY s.created_at DESC
         LIMIT 20
     """))).fetchall()
@@ -334,12 +356,13 @@ async def generate_detail_report(session: AsyncSession) -> list[str]:
     if recent_llm:
         for idx, row in enumerate(reversed(recent_llm), 1):
             (
-                kst, coin, pattern, pat_conf, decision, conf,
+                kst, coin, pat, pat_conf, decision, conf,
                 sig_price, fut_price, rsi_raw, macd_h,
                 sr_sig, sup, res, bb_upper, bb_lower,
                 trend_dir, trend_tf, vol_ratio,
                 llm_source, llm_reason,
             ) = row
+            pattern = pat
 
             # 판단 이모지
             if decision == "BUY":
@@ -349,8 +372,13 @@ async def generate_detail_report(session: AsyncSession) -> list[str]:
             else:
                 d_emoji = "⏸"
 
-            # LLM 소스 라벨
-            src = "DeepSeek R1" if llm_source == "deepseek" else "Ollama"
+            # 소스 라벨
+            _src_labels = {
+                "technical": "탑다운",
+                "deepseek": "DeepSeek R1",
+                "local_llm": "Ollama",
+            }
+            src = _src_labels.get(llm_source, llm_source or "?")
 
             # 4h 후 결과
             if fut_price and sig_price and float(sig_price) > 0:
@@ -444,7 +472,7 @@ async def generate_detail_report(session: AsyncSession) -> list[str]:
 
     # 카드들을 4096자 이내로 분할하여 메시지 생성
     if cards:
-        card_header = f"📋 *최근 LLM 판단* ({len(cards)}건)\n"
+        card_header = f"📋 *최근 시그널 이력* ({len(cards)}건)\n"
         card_footer = "\n_결과: ✅적중 ❌실패 ⏳대기 (HOLD: 4h 내 2% 이내=✅)_"
 
         current_msg = card_header
@@ -461,7 +489,7 @@ async def generate_detail_report(session: AsyncSession) -> list[str]:
 
     # 요약 메시지에 LLM 판단 카드 대신 간략 통계만
     lines.append(
-        f"📋 *LLM 판단*: {len(cards)}건"
+        f"📋 *시그널 이력*: {len(cards)}건"
         + (" (카드 상세는 다음 메시지)" if cards else " (기록 없음)")
     )
     lines.append("")
@@ -470,7 +498,8 @@ async def generate_detail_report(session: AsyncSession) -> list[str]:
     pattern_accuracy = (await session.execute(text("""
         WITH pat_eval AS (
             SELECT
-                COALESCE(s.indicators->'patterns'->'patterns'->0->>'name_ko', '패턴없음') as pattern,
+                COALESCE(s.indicators->'patterns'->'patterns'
+                    ->0->>'name_ko', '패턴없음') as pattern,
                 s.signal_type,
                 sp.signal_price, fp.future_price,
                 CASE
@@ -482,7 +511,8 @@ async def generate_detail_report(session: AsyncSession) -> list[str]:
             FROM signals s
             LEFT JOIN LATERAL (
                 SELECT c.close as signal_price FROM candles c
-                WHERE c.market = s.market AND c.timeframe IN ('5m','15m') AND c.open_at <= s.created_at
+                WHERE c.market = s.market AND c.timeframe IN ('5m','15m')
+                    AND c.open_at <= s.created_at
                 ORDER BY c.open_at DESC LIMIT 1
             ) sp ON true
             LEFT JOIN LATERAL (
@@ -491,7 +521,7 @@ async def generate_detail_report(session: AsyncSession) -> list[str]:
                 AND c.open_at >= s.created_at + interval '4 hours'
                 ORDER BY c.open_at ASC LIMIT 1
             ) fp ON true
-            WHERE s.source IN ('deepseek', 'local_llm')
+            WHERE s.source IN ('technical', 'deepseek', 'local_llm')
               AND s.signal_type IN ('BUY', 'SELL')
         )
         SELECT pattern, signal_type,
@@ -567,8 +597,7 @@ async def generate_detail_report(session: AsyncSession) -> list[str]:
             AND c.open_at >= s.created_at + interval '4 hours'
             ORDER BY c.open_at ASC LIMIT 1
         ) fp ON true
-        WHERE s.source IN ('deepseek', 'local_llm')
-          AND s.signal_type = 'HOLD'
+        WHERE s.signal_type = 'HOLD'
           AND fp.future_price IS NOT NULL
           AND sp.signal_price > 0
     """))).fetchone()
@@ -583,19 +612,32 @@ async def generate_detail_report(session: AsyncSession) -> list[str]:
     # ── 6. 시그널 현황 ──
     total_counts = (await session.execute(text("""
         SELECT
-            count(*) FILTER (WHERE source = 'technical') as tech,
-            count(*) FILTER (WHERE source IN ('deepseek', 'local_llm')) as llm,
-            count(*) FILTER (WHERE source IN ('deepseek', 'local_llm')
-                AND signal_type IN ('BUY', 'SELL')) as llm_bs,
-            count(*) FILTER (WHERE source IN ('deepseek', 'local_llm')
-                AND signal_type = 'HOLD') as llm_hold
+            count(*) FILTER (
+                WHERE source = 'technical'
+                AND signal_type IN ('BUY', 'SELL')
+            ) as tech_bs,
+            count(*) FILTER (
+                WHERE source = 'technical' AND signal_type = 'HOLD'
+            ) as tech_hold,
+            count(*) FILTER (
+                WHERE source IN ('deepseek', 'local_llm')
+            ) as llm,
+            count(*) FILTER (
+                WHERE source IN ('deepseek', 'local_llm')
+                AND signal_type IN ('BUY', 'SELL')
+            ) as llm_bs,
+            count(*) FILTER (
+                WHERE source IN ('deepseek', 'local_llm')
+                AND signal_type = 'HOLD'
+            ) as llm_hold
         FROM signals
     """))).fetchone()
 
     if total_counts:
-        tech, llm, llm_bs, llm_hold = total_counts
+        tech_bs, tech_hold, llm, llm_bs, llm_hold = total_counts
         lines.append(
-            f"\n📊 기술분석 `{tech}건` → LLM `{llm}건`"
+            f"\n📊 시그널 `{tech_bs}건` (HOLD `{tech_hold}`)"
+            f" | 충격감지 LLM `{llm}건`"
             f" (BUY/SELL `{llm_bs}` HOLD `{llm_hold}`)"
         )
 
