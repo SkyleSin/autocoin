@@ -149,6 +149,8 @@ async def handle_analyze_local_llm(
 
     # SELL 시그널 → 보유량 확인을 check_alert 앞에서 수행
     # 보유량 없으면 ActiveAlert 생성 방지 + 기존 것 삭제
+    # SELL 보유량 확인 + 소액 전량 매도 플래그
+    _force_full_sell = False
     if llm_result.decision == "SELL":
         try:
             from job_runner.handlers.trade import _accounts_sync
@@ -175,6 +177,13 @@ async def handle_analyze_local_llm(
                 else:
                     logger.info("SELL 알림 생략: %s 보유량 없음", market)
                 return
+            # 소액 보유 → 전량 매도 전환 (최소주문금액 미달 방지)
+            krw_value = coin_balance * close_price
+            if krw_value <= 5000:
+                _force_full_sell = True
+                logger.info(
+                    "소액 보유 전량 매도 전환: %s (%.0f원)", market, krw_value,
+                )
         except Exception:
             logger.warning("SELL 보유 확인 실패, 알림 생략", exc_info=True)
             return
@@ -242,6 +251,10 @@ async def handle_analyze_local_llm(
         sell_rec = calculate_sell_recommendation(pat_list, confidence=llm_result.confidence)
         sell_rec_pct = sell_rec.recommended_pct
         sell_choices = sell_rec.choices
+        # 소액 보유 시 전량 매도 강제 (최소주문금액 미달 방지)
+        if _force_full_sell and sell_rec_pct < 100:
+            sell_rec_pct = 100
+            sell_choices = None
         alert_text += f"\n\n📊 *매도 추천:* {sell_rec.pattern_name} → `{sell_rec_pct}%`"
         if sell_rec_pct < 100:
             alert_text += " (부분 매도 → 재진입 가능)"

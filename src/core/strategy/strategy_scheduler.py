@@ -125,6 +125,15 @@ async def _handle_event(
                 await session.commit()
                 return
 
+        # SELL → 보유량 없으면 LLM 호출 스킵 (API 비용 절감)
+        if result.signal_type == "SELL":
+            if not await _has_coin_balance(event.market, settings):
+                logger.info(
+                    "strategy: SELL 스킵 — 보유량 없음: %s", event.market,
+                )
+                await session.commit()
+                return
+
         # BUY/SELL → 알림 가능 여부 확인 후 LLM Job 생성
         if result.signal_type in ("BUY", "SELL"):
             action = await check_alert_preview(
@@ -159,3 +168,17 @@ async def _handle_event(
                 )
 
         await session.commit()
+
+
+async def _has_coin_balance(market: str, settings: Settings) -> bool:
+    """빗썸 잔고 조회 → 해당 코인 보유 여부 반환. 실패 시 True(보수적)."""
+    try:
+        from job_runner.handlers.trade import _accounts_sync
+
+        accounts = await asyncio.to_thread(_accounts_sync, settings)
+        coin = market.split("-")[1] if "-" in market else ""
+        acc = next((a for a in accounts if a.get("currency") == coin), None)
+        return float(acc["balance"]) > 0 if acc else False
+    except Exception:
+        logger.warning("SELL 보유량 조회 실패, 보수적으로 허용: %s", market)
+        return True
