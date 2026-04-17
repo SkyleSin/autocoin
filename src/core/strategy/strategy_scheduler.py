@@ -1,7 +1,7 @@
 """전략 스케줄러 — queue 기반 이벤트 구동.
 
 compute_indicators 완료 시 strategy_queue에 push된 이벤트를 받아
-전략을 실행하고, BUY/SELL이면 LLM Job을 생성한다.
+전략을 실행하고, BUY/SELL이면 직접 텔레그램 알림을 발송한다.
 
 수집/분석과 완전 독립. queue만 공유.
 """
@@ -15,10 +15,8 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.strategy.base import get_strategy
-from models.job import Job
-from models.job_status import JobStatus
+from core.strategy.signal_notifier import notify_signal
 from models.signal import Signal
-from services.alert_service import AlertAction, check_alert_preview
 from utils.config import Settings
 
 logger = logging.getLogger(__name__)
@@ -63,7 +61,7 @@ async def _handle_event(
     session_factory: async_sessionmaker[AsyncSession],
     settings: Settings,
 ) -> None:
-    """단일 이벤트 처리: 전략 실행 → Signal 저장 → LLM 체이닝."""
+    """단일 이벤트 처리: 전략 실행 → Signal 저장 → 알림 발송."""
     strategy = get_strategy()
 
     async with session_factory() as session:
@@ -78,7 +76,6 @@ async def _handle_event(
             return
 
         close_price = meta.get("close_price", 0.0)
-        candle_count = meta.get("candle_count", 0)
         combined_indicators = meta.get("indicators", {})
         strategy_timeframe = meta.get("timeframe", event.timeframe)
 
@@ -118,6 +115,7 @@ async def _handle_event(
         # 방어 모드 활성 시 BUY 차단
         if result.signal_type == "BUY":
             from core.safety.defense_mode import is_defense_active
+
             if is_defense_active(event.market):
                 logger.info(
                     "strategy: BUY 차단 — 방어 모드 활성: %s", event.market,
@@ -125,60 +123,17 @@ async def _handle_event(
                 await session.commit()
                 return
 
-        # SELL → 보유량 없으면 LLM 호출 스킵 (API 비용 절감)
-        if result.signal_type == "SELL":
-            if not await _has_coin_balance(event.market, settings):
-                logger.info(
-                    "strategy: SELL 스킵 — 보유량 없음: %s", event.market,
-                )
-                await session.commit()
-                return
-
-        # BUY/SELL → 알림 가능 여부 확인 후 LLM Job 생성
+        # BUY/SELL → 직접 텔레그램 알림 발송 (SELL 보유량은 notifier에서 확인)
         if result.signal_type in ("BUY", "SELL"):
-            action = await check_alert_preview(
-                session, event.market, strategy_timeframe,
+            await notify_signal(
+                session, settings,
+                market=event.market,
+                timeframe=strategy_timeframe,
                 signal_type=result.signal_type,
+                confidence=result.confidence,
+                reasons=result.reasons,
+                indicators=combined_indicators,
+                close_price=close_price,
             )
-            if action in (AlertAction.SKIP, AlertAction.PASSED):
-                logger.info(
-                    "strategy: LLM skip (alert %s): %s %s %s",
-                    action, event.market,
-                    strategy_timeframe, result.signal_type,
-                )
-            else:
-                llm_job = Job(
-                    type="analyze_local_llm",
-                    status=JobStatus.Ready.value,
-                    content={
-                        "market": event.market,
-                        "timeframe": strategy_timeframe,
-                        "close_price": close_price,
-                        "indicators": combined_indicators,
-                        "technical_signal": result.signal_type,
-                        "technical_reasons": result.reasons,
-                        "candle_count": candle_count,
-                    },
-                    priority=15,
-                )
-                session.add(llm_job)
-                logger.info(
-                    "strategy: LLM job created: %s %s %s",
-                    event.market, strategy_timeframe, result.signal_type,
-                )
 
         await session.commit()
-
-
-async def _has_coin_balance(market: str, settings: Settings) -> bool:
-    """빗썸 잔고 조회 → 해당 코인 보유 여부 반환. 실패 시 True(보수적)."""
-    try:
-        from job_runner.handlers.trade import _accounts_sync
-
-        accounts = await asyncio.to_thread(_accounts_sync, settings)
-        coin = market.split("-")[1] if "-" in market else ""
-        acc = next((a for a in accounts if a.get("currency") == coin), None)
-        return float(acc["balance"]) > 0 if acc else False
-    except Exception:
-        logger.warning("SELL 보유량 조회 실패, 보수적으로 허용: %s", market)
-        return True

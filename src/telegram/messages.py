@@ -69,6 +69,55 @@ def format_technical_signal(
     return msg
 
 
+def format_signal_alert(
+    market: str,
+    close_price: float,
+    signal_type: str,
+    confidence: float,
+    reasons: list[str],
+    indicators: dict[str, Any] | None = None,
+) -> str:
+    """기술분석 시그널 직접 알림 메시지 (LLM 없이)."""
+    emoji = _signal_emoji(signal_type)
+    reasons_text = "\n".join(f"  • {r}" for r in reasons)
+
+    msg = f"""🚨 *매매 시그널 발생*
+
+마켓: `{market}`
+현재가: `{close_price:,.0f} KRW`
+
+*{emoji} {signal_type}* (신뢰도: {confidence:.0%})
+
+*판단 근거:*
+{reasons_text}"""
+
+    if indicators:
+        msg += _format_pattern_sr(indicators)
+
+    return msg
+
+
+def _format_pattern_sr(indicators: dict[str, Any]) -> str:
+    """패턴/SR 정보 포맷."""
+    parts: list[str] = []
+    pat = indicators.get("patterns", {})
+    pat_list = pat.get("patterns", []) if isinstance(pat, dict) else []
+    if pat_list:
+        p = pat_list[0]
+        parts.append(f"\n\n📐 패턴: {p['name_ko']} ({p['confidence']}%)")
+
+    sr = indicators.get("support_resistance", {})
+    if isinstance(sr, dict):
+        sup = sr.get("nearest_support")
+        res = sr.get("nearest_resistance")
+        if sup:
+            parts.append(f"\n📉 지지선: `{sup:,.0f}`")
+        if res:
+            parts.append(f"\n📈 저항선: `{res:,.0f}`")
+
+    return "".join(parts)
+
+
 def format_llm_signal(
     market: str,
     close_price: float,

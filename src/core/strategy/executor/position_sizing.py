@@ -81,20 +81,36 @@ def calculate_position(
     # 1) 패턴별 기본 비율 → max_per_trade_pct 대비 비율로 스케일
     pattern_name = "없음"
     pattern_weight = 0.5  # 패턴 없으면 상한의 50%
+    scoring = None
 
     if patterns:
         top = patterns[0]
         name = top.get("name", "")
         pattern_name = top.get("name_ko", name)
         raw_pct = _get_allocation().get(name, DEFAULT_ALLOCATION_PCT)
-        # 패턴 기본 비율(10~35%)을 0.3~1.0 가중치로 변환
         pattern_weight = max(0.3, min(raw_pct / 35.0, 1.0))
         adjustments.append(f"패턴 {pattern_name} 가중치 {pattern_weight:.0%}")
+    elif indicators:
+        # 탑다운 scoring 기반 가중치
+        scoring = indicators.get("scoring")
+        if scoring:
+            score_4h = scoring.get("score_4h", 0)
+            multiplier = scoring.get("multiplier", 1.0)
+            score_weight = min(score_4h / 6.0, 1.0)
+            pattern_weight = max(0.5, min(score_weight * multiplier, 1.0))
+            adjustments.append(
+                f"탑다운 4H={score_4h:.2f} mult={multiplier:.2f}"
+                f" → 가중치 {pattern_weight:.0%}"
+            )
 
     base_pct = max_per_trade_pct * pattern_weight
 
-    # 2) confidence 스케일링 (0.5~1.0 → 50~100%)
-    conf_scale = max(0.5, min(confidence, 1.0))
+    # 2) confidence 스케일링
+    if scoring:
+        # 탑다운은 3단계 필터 통과 → confidence 스케일 관대하게
+        conf_scale = max(0.7, min(confidence * 1.5, 1.0))
+    else:
+        conf_scale = max(0.5, min(confidence, 1.0))
     adjusted_pct = base_pct * conf_scale
     if conf_scale < 1.0:
         adjustments.append(f"confidence {confidence:.0%} → {conf_scale:.0%} 스케일")
