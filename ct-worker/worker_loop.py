@@ -10,6 +10,7 @@ import json
 from handlers.account import handle_check_balance, handle_get_balance
 from handlers.candle import handle_collect_candles
 from handlers.market import handle_get_markets, handle_get_ticker
+from handlers.order import handle_cancel_order, handle_check_order, handle_place_order
 from infra.api.user import get_user_full
 from infra.redis_client import get_redis
 from infra.redis_queue import poll_delayed_jobs, pop_trade_job, push_trade_job
@@ -54,8 +55,13 @@ async def trade_worker(settings: Settings, shutdown: asyncio.Event, name: str) -
                 await handle_get_markets(payload, user_settings)
             elif job_type == "get_ticker":
                 await handle_get_ticker(payload, user_settings)
+            elif job_type == "place_order":
+                await handle_place_order(payload, user_settings)
+            elif job_type == "check_order":
+                await handle_check_order(payload, user_settings)
+            elif job_type == "cancel_order":
+                await handle_cancel_order(payload, user_settings)
             else:
-                # TODO: place_order, check_order, cancel_order
                 log.warning("Job 핸들러 미구현: %s", job_type)
 
             # 응답 채널이 지정된 경우 결과 발행
