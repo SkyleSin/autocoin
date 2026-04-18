@@ -19,14 +19,11 @@ from models.active_alert import ActiveAlert
 from models.app_config import AppConfig
 from models.candle import Candle
 from models.indicator_snapshot import IndicatorSnapshot
-from models.job import Job
-from models.job_status import JobStatus
 from models.pattern_accuracy import PatternAccuracy
 from models.pattern_config import PatternConfig
 from models.pattern_evaluation import PatternEvaluation
 from models.shadow_trade import ShadowPortfolio, ShadowTrade
 from models.signal import Signal
-from models.todo import Todo
 from models.tracked_asset import TrackedAsset
 from models.trade import Trade
 from models.user import User
@@ -35,14 +32,12 @@ from routers.candles import router as candles_router
 from routers.config import router as config_router
 from routers.indicator_snapshots import router as snapshots_router
 from routers.indicator_weights import router as indicator_weights_router
-from routers.jobs import router as jobs_router
 from routers.pattern_accuracy import router as pattern_accuracy_router
 from routers.pattern_configs import router as pattern_configs_router
 from routers.pattern_evaluations import router as pattern_evaluations_router
 from routers.reports import router as reports_router
 from routers.shadow import router as shadow_router
 from routers.signals import router as signals_router
-from routers.todos import router as todos_router
 from routers.tracked_assets import router as tracked_assets_router
 from routers.trades import router as trades_router
 from routers.users import router as users_router
@@ -78,7 +73,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await conn.execute(text("SELECT 1"))
             for table in (
                 User.__table__,
-                Job.__table__,
                 Candle.__table__,
                 TrackedAsset.__table__,
                 Signal.__table__,
@@ -91,7 +85,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 ShadowTrade.__table__,
                 ShadowPortfolio.__table__,
                 IndicatorSnapshot.__table__,
-                Todo.__table__,
             ):
                 await conn.run_sync(
                     lambda sync_conn, t=table: t.create(sync_conn, checkfirst=True),
@@ -129,15 +122,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 ALTER TABLE active_alerts
                 ADD COLUMN IF NOT EXISTS user_id INT DEFAULT NULL
             """))
-            # 이전 프로세스에서 Queue 상태로 남은 잡 → Ready로 복구
-            await conn.execute(
-                text("UPDATE jobs SET status = :ready WHERE status = :queue"),
-                {
-                    "ready": JobStatus.Ready.value,
-                    "queue": JobStatus.Queue.value,
-                },
-            )
-
         # DB에서 리스크 설정 로드
         async with session_factory() as session:
             changed = await load_risk_settings(session, settings)
@@ -172,14 +156,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await engine.dispose()
 
     app = FastAPI(title="autocoin", version="0.1.0", lifespan=lifespan)
-    app.include_router(jobs_router)
     app.include_router(tracked_assets_router)
     app.include_router(candles_router)
     app.include_router(signals_router)
     app.include_router(snapshots_router)
     app.include_router(trades_router)
     app.include_router(users_router)
-    app.include_router(todos_router)
     app.include_router(config_router)
     app.include_router(active_alerts_router)
     app.include_router(indicator_weights_router)

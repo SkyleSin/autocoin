@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.shadow.shadow_service import get_shadow_summary, record_shadow_trade
+from services.shadow_service import get_shadow_summary, record_shadow_trade
 from utils.deps import get_db
 
 router = APIRouter(prefix="/api/shadow", tags=["shadow"])

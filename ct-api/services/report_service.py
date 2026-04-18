@@ -196,7 +196,7 @@ async def generate_report(
 
     # ── 6. 섀도우 트레이딩 (자동화 가정) ──
     try:
-        from core.shadow.shadow_service import get_shadow_summary
+        from services.shadow_service import get_shadow_summary
         shadow = await get_shadow_summary(session)
         if shadow["buy_count"] > 0 or shadow["sell_count"] > 0:
             lines.append("🔮 *섀도우 트레이딩* (자동화 가정)")
@@ -643,7 +643,7 @@ async def generate_detail_report(session: AsyncSession) -> list[str]:
 
     # ── 7. 섀도우 트레이딩 상세 ──
     try:
-        from core.shadow.shadow_service import get_shadow_summary
+        from services.shadow_service import get_shadow_summary
         shadow = await get_shadow_summary(session)
         if shadow["buy_count"] > 0 or shadow["sell_count"] > 0:
             lines.append("\n🔮 *섀도우 트레이딩* (자동화 가정)")
