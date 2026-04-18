@@ -4,10 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
 
-from handlers.account import handle_check_account
-from handlers.order import handle_cancel_order, handle_confirm_order
 from infra.api.user import get_user_full
 from infra.redis_queue import poll_delayed_jobs, pop_trade_job, push_trade_job
 from infra.redis_rate_limit import wait_for_rate_limit
@@ -36,14 +33,8 @@ async def trade_worker(settings: Settings, shutdown: asyncio.Event, name: str) -
 
             await wait_for_rate_limit(user_id)
 
-            if job_type == "check_account":
-                await handle_check_account(user_settings, job_data)
-            elif job_type == "confirm_order":
-                await handle_confirm_order(user_settings, job_data)
-            elif job_type == "cancel_order":
-                await handle_cancel_order(user_settings, job_data)
-            else:
-                log.warning("알 수 없는 Job 타입: %s", job_type)
+            # TODO: 주문 흐름 설계 후 핸들러 연결
+            log.warning("Job 핸들러 미구현: %s", job_type)
 
         except Exception:
             log.exception("Job 처리 실패: %s", job_data)
