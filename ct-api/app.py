@@ -128,8 +128,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if changed:
                 logger.info("DB에서 리스크 설정 로드: %s", changed)
 
-        # Skyle 유저 시드
-        await _seed_skyle_user(session_factory, settings)
+        # 유저 + 기본 설정 시드
+        await _seed_users(session_factory, settings)
 
         app.state.settings = settings
         app.state.session_factory = session_factory
@@ -185,38 +185,47 @@ def main() -> None:
     )
 
 
-async def _seed_skyle_user(
+async def _seed_users(
     session_factory: async_sessionmaker[AsyncSession],
     settings: Settings,
 ) -> None:
-    """Skyle 유저가 없으면 생성."""
-    if not settings.encrypt_key or not settings.telegram_chat_id:
-        logger.warning("ENCRYPT_KEY 또는 TELEGRAM_CHAT_ID 미설정 — Skyle 유저 시드 스킵")
-        return
-    async with session_factory() as session:
-        existing = await session.execute(
-            select(User).where(User.username == "Skyle")
-        )
-        if existing.scalar_one_or_none() is not None:
-            return
-        from utils.crypto import encrypt
+    """Skyle 유저 시드 + 시스템 기본 리스크 설정."""
+    from services.config_service import set_config
 
-        user = User(
-            telegram_id=int(settings.telegram_chat_id),
-            username="Skyle",
-            bithumb_api_key=encrypt(settings.bithumb_api_key, settings.encrypt_key),
-            bithumb_secret_key=encrypt(
-                settings.bithumb_secret_key, settings.encrypt_key,
-            ),
-            strategy_type="topdown_mtf",
-            coin_watchlist=[],
-            risk_max_per_trade_pct=settings.risk_max_per_trade_pct,
-            risk_max_daily_trades=settings.risk_max_daily_trades,
-            risk_min_krw_reserve=settings.risk_min_krw_reserve,
-        )
-        session.add(user)
-        await session.commit()
-        logger.info("Skyle 유저 생성 완료")
+    async with session_factory() as session:
+        # 시스템 기본 리스크 설정 (user_id=0)
+        defaults = {
+            "risk_max_per_trade_pct": str(settings.risk_max_per_trade_pct),
+            "risk_max_daily_trades": str(settings.risk_max_daily_trades),
+            "risk_min_krw_reserve": str(settings.risk_min_krw_reserve),
+            "alert_remind_interval_sec": str(settings.alert_remind_interval_sec),
+        }
+        for key, value in defaults.items():
+            await set_config(session, key, value, user_id=0)
+
+        # ── Skyle ──
+        if not settings.encrypt_key:
+            logger.warning("ENCRYPT_KEY 또는 TELEGRAM_CHAT_ID 미설정 — Skyle 유저 시드 스킵")
+            return
+
+        existing_skyle = (await session.execute(
+            select(User).where(User.username == "Skyle")
+        )).scalar_one_or_none()
+        if existing_skyle is None:
+            from utils.crypto import encrypt
+
+            session.add(User(
+                telegram_id=int(settings.telegram_chat_id),
+                username="Skyle",
+                bithumb_api_key=encrypt(settings.bithumb_api_key, settings.encrypt_key),
+                bithumb_secret_key=encrypt(
+                    settings.bithumb_secret_key, settings.encrypt_key,
+                ),
+                strategy_type="topdown_mtf",
+                coin_watchlist=[],
+            ))
+            await session.commit()
+            logger.info("Skyle 유저 생성 완료")
 
 
 async def _send_startup_alert(
