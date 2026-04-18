@@ -17,6 +17,7 @@ from infra.api.indicator_snapshot import upsert_indicator_snapshot
 from infra.api.job import cleanup_jobs
 from infra.api.report import generate_report
 from infra.api.tracked_asset import get_active_markets
+from infra.api.user import get_active_users
 from infra.redis_pubsub import publish_analysis_ready
 from infra.redis_queue import push_trade_job
 from utils.config import Settings
@@ -75,6 +76,26 @@ async def _trigger_collect(markets: list[str], timeframe: str) -> None:
             "payload": {"market": market, "timeframe": timeframe},
         })
     logger.info("candle trigger: %s × %d markets → Redis", timeframe, len(markets))
+
+
+async def _trigger_portfolio_sync() -> None:
+    """활성 유저별 포트폴리오 동기화 Job → ct-worker."""
+    try:
+        users = await get_active_users()
+    except Exception:
+        logger.exception("portfolio sync: 유저 목록 조회 실패")
+        return
+
+    for user in users:
+        user_id = user.get("id")
+        if user_id is None:
+            continue
+        await push_trade_job({
+            "type": "sync_portfolio",
+            "user_id": str(user_id),
+            "payload": {"user_id": user_id},
+        })
+    logger.info("portfolio sync trigger: %d users → Redis", len(users))
 
 
 # ---------------------------------------------------------------------------
@@ -215,6 +236,13 @@ async def collect_scheduler(settings: Settings) -> None:
                         except Exception:
                             logger.exception("candle trigger 실패: %s", tf)
 
+                    # 15m 경계 → 포트폴리오 동기화 (전략 평가 전 잔고 갱신)
+                    if tf == "15m":
+                        try:
+                            await _trigger_portfolio_sync()
+                        except Exception:
+                            logger.exception("portfolio sync trigger 실패")
+
             # 분석: ct-api 봉 조회 → 지표/신호 저장
             for tf in TF_PERIODS:
                 for market in markets:
@@ -236,6 +264,12 @@ async def collect_scheduler(settings: Settings) -> None:
                     logger.info("collect/daily: job cleanup 완료")
                 except Exception:
                     logger.exception("collect/daily: job cleanup 실패")
+                # 마켓 목록 동기화
+                try:
+                    await push_trade_job({"type": "sync_markets", "payload": {}})
+                    logger.info("collect/daily: 마켓 동기화 트리거")
+                except Exception:
+                    logger.exception("collect/daily: 마켓 동기화 트리거 실패")
                 next_daily = _next_kst_target(0, 5)
 
             # 리포트

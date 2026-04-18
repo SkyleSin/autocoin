@@ -68,12 +68,8 @@ def _to_dict(r: User) -> dict[str, Any]:
         "id": r.id,
         "telegram_id": r.telegram_id,
         "username": r.username,
-        "strategy_type": r.strategy_type,
-        "strategy_params": r.strategy_params,
         "coin_watchlist": r.coin_watchlist,
-        "risk_max_per_trade_pct": r.risk_max_per_trade_pct,
-        "risk_max_daily_trades": r.risk_max_daily_trades,
-        "risk_min_krw_reserve": r.risk_min_krw_reserve,
+        "risk_settings": r.risk_settings,
         "is_active": r.is_active,
         "created_at": r.created_at.isoformat(),
     }

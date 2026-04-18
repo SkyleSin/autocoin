@@ -12,6 +12,7 @@ from infra.redis_client import get_redis
 logger = logging.getLogger(__name__)
 
 CHANNEL = "send_message"
+MASTER_CHANNEL = "send_master"
 EVENT_CHANNEL = "worker_events"
 
 
@@ -116,3 +117,22 @@ async def publish_to_telegram(msg: dict[str, Any]) -> None:
     """ct-advisor가 처리 완료된 메시지를 ct-telegram(send_message)으로 전달."""
     r = get_redis()
     await r.publish(CHANNEL, json.dumps(msg, ensure_ascii=False))
+
+
+async def publish_master(
+    chat_id: str,
+    text: str,
+    *,
+    parse_mode: str = "Markdown",
+) -> None:
+    """master 봇 채널로 시스템 메시지 발행."""
+    if not chat_id:
+        return
+    msg: dict[str, Any] = {
+        "type": "text",
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": parse_mode,
+    }
+    r = get_redis()
+    await r.publish(MASTER_CHANNEL, json.dumps(msg, ensure_ascii=False))

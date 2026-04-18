@@ -7,10 +7,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
-from core.safety.defense_mode import (
+from safety.defense_mode import (
     ShockLevel,
     calculate_dynamic_stop_pct,
     calculate_stop_loss,
@@ -22,21 +19,24 @@ from core.safety.defense_mode import (
     is_defense_active,
     update_trailing,
 )
-from core.safety.defense_mode import (
+from safety.defense_mode import (
     _save_state as _save_defense_state,
 )
-from core.safety.shock_detector import (
+from safety.shock_detector import (
     classify_shock,
     detect_price_gap,
     detect_volatility_surge,
     detect_volume_surge,
 )
-from core.strategy.llm.shock_prompt import build_shock_prompt
+from safety.llm.shock_prompt import build_shock_prompt
+from infra.api.candle import get_candles
+from infra.api.indicator_snapshot import get_latest_snapshot
+from infra.api.portfolio import get_user_portfolio
+from infra.api.signal import get_latest_signal
+from infra.api.user import get_active_users
 from infra.redis_client import get_redis
 from infra.redis_pubsub import publish_telegram
 from infra.redis_queue import push_trade_job
-from models.candle import Candle
-from models.signal import Signal
 from utils.config import Settings
 
 logger = logging.getLogger(__name__)
@@ -59,84 +59,35 @@ def _get_candles_1m_sync(settings: Settings, market: str, count: int = 30) -> li
     return []
 
 
-def _get_ticker_sync(settings: Settings, market: str) -> float:
-    from bithumb.ticker import BithumbTicker
-    client = BithumbTicker(settings)
-    data = client.get(market)
-    if data and isinstance(data, list):
-        return float(data[0].get("trade_price", 0))
-    return 0.0
-
-
-def _get_balances_sync(settings: Settings) -> list[dict[str, Any]]:
-    from bithumb.account import BithumbAccount
-    client = BithumbAccount(settings)
-    return client.get_balances()
-
-
 async def _get_indicator_snapshot(
-    session: AsyncSession, market: str, tf: str,
+    market: str, tf: str,
 ) -> dict[str, Any] | None:
-    """indicator_snapshots에서 최근 지표 조회."""
-    from models.indicator_snapshot import IndicatorSnapshot
-
-    row = (await session.execute(
-        select(IndicatorSnapshot)
-        .where(
-            IndicatorSnapshot.market == market,
-            IndicatorSnapshot.timeframe == tf,
-        )
-        .order_by(IndicatorSnapshot.created_at.desc())
-        .limit(1)
-    )).scalar_one_or_none()
-
-    if row is None:
-        return None
-    return row.data if hasattr(row, "data") else row.indicators
+    """indicator_snapshots API에서 최근 지표 조회."""
+    return await get_latest_snapshot(market, tf)
 
 
-async def _get_nearest_support(
-    session: AsyncSession, market: str,
-) -> float | None:
+async def _get_nearest_support(market: str) -> float | None:
     """최근 시그널에서 지지선 추출."""
-    last_signal = (await session.execute(
-        select(Signal)
-        .where(Signal.market == market)
-        .order_by(Signal.created_at.desc())
-        .limit(1)
-    )).scalar_one_or_none()
-
-    if not last_signal or not last_signal.indicators:
+    last_signal = await get_latest_signal(market)
+    if not last_signal or not last_signal.get("indicators"):
         return None
 
-    sr = last_signal.indicators.get("support_resistance")
+    sr = last_signal["indicators"].get("support_resistance")
     if not sr or not isinstance(sr, dict):
         return None
     support = sr.get("nearest_support")
     return float(support) if support else None
 
 
-async def _get_daily_candles(
-    session: AsyncSession, market: str, days: int = 10,
-) -> list[Candle]:
-    """최근 N일 일봉 조회."""
-    rows = (await session.execute(
-        select(Candle)
-        .where(
-            Candle.market == market,
-            Candle.timeframe == "1d",
-        )
-        .order_by(Candle.open_at.desc())
-        .limit(days)
-    )).scalars().all()
-    return list(reversed(rows))
+async def _get_daily_candles(market: str, days: int = 10) -> list[dict]:
+    """최근 N일 일봉 조회 (ct-api)."""
+    candles = await get_candles(market, "1d", limit=days, order="desc")
+    return list(reversed(candles)) if candles else []
 
 
-async def _get_pre_shock_bb_width(
-    session: AsyncSession, market: str,
-) -> float:
+async def _get_pre_shock_bb_width(market: str) -> float:
     """충격 전 3시간 평균 BB 폭 (1H 기준). 없으면 0."""
-    snap = await _get_indicator_snapshot(session, market, "1h")
+    snap = await _get_indicator_snapshot(market, "1h")
     if not snap:
         return 0.0
     bb_u = snap.get("bb_upper")
@@ -147,11 +98,9 @@ async def _get_pre_shock_bb_width(
     return 0.0
 
 
-async def _get_pre_shock_volume_avg(
-    session: AsyncSession, market: str,
-) -> float:
+async def _get_pre_shock_volume_avg(market: str) -> float:
     """충격 전 거래량 비율 평균. volume_ratio에서 추출."""
-    snap = await _get_indicator_snapshot(session, market, "1h")
+    snap = await _get_indicator_snapshot(market, "1h")
     if not snap:
         return 0.0
     return float(snap.get("volume_ratio", 1.0))
@@ -166,7 +115,7 @@ async def _call_shock_llm(settings: Settings, prompt: str) -> Any:
 
     if settings.deepseek_api_key:
         try:
-            from core.strategy.llm.deepseek_llm import query_deepseek
+            from safety.llm.deepseek_llm import query_deepseek
             result = await query_deepseek(
                 prompt,
                 api_key=settings.deepseek_api_key,
@@ -178,7 +127,7 @@ async def _call_shock_llm(settings: Settings, prompt: str) -> Any:
             logger.warning("shock_llm: DeepSeek 실패, Ollama 폴백", exc_info=True)
 
     if result is None:
-        from core.strategy.llm.local_llm import query_ollama
+        from safety.llm.local_llm import query_ollama
         result = await query_ollama(
             prompt,
             base_url=settings.ollama_base_url,
@@ -194,14 +143,14 @@ async def _call_shock_llm(settings: Settings, prompt: str) -> Any:
 
 
 async def _detect_and_handle_shock(
-    session: AsyncSession,
     settings: Settings,
+    user_id: int,
+    chat_id: str,
     market: str,
     currency: str,
     balance: float,
 ) -> None:
     """단일 마켓 충격 감지 + 방어 모드 진입."""
-    # 쿨다운 확인 (Redis TTL 기반)
     r = get_redis()
     if await r.exists(f"shock_cooldown:{market}"):
         return
@@ -250,14 +199,12 @@ async def _detect_and_handle_shock(
     )
 
     # 지표 조회 (LLM 프롬프트용)
-    snap_4h = await _get_indicator_snapshot(session, market, "4h")
-    snap_1h = await _get_indicator_snapshot(session, market, "1h")
-    snap_15m = await _get_indicator_snapshot(session, market, "15m")
+    snap_4h = await _get_indicator_snapshot(market, "4h")
+    snap_1h = await _get_indicator_snapshot(market, "1h")
+    snap_15m = await _get_indicator_snapshot(market, "15m")
 
-    # 포지션 정보
     position_info = f"{currency} {balance}개 보유"
 
-    # LLM 문의
     prompt = build_shock_prompt(
         market=market,
         current_price=current_price,
@@ -271,8 +218,6 @@ async def _detect_and_handle_shock(
         indicators_15m=snap_15m,
         position_info=position_info,
     )
-
-    chat_id = settings.telegram_chat_id
 
     try:
         llm_result = await _call_shock_llm(settings, prompt)
@@ -288,7 +233,6 @@ async def _detect_and_handle_shock(
         return
 
     if llm_result.decision != "SELL":
-        # HOLD — 경고 알림만
         if chat_id:
             await publish_telegram(
                 chat_id,
@@ -303,25 +247,23 @@ async def _detect_and_handle_shock(
 
     # ── SELL 판단 → 방어 모드 진입 ──
 
-    # 손절선 계산
-    sr_support = await _get_nearest_support(session, market)
-    daily_candles = await _get_daily_candles(session, market, 10)
+    sr_support = await _get_nearest_support(market)
+    daily_candles = await _get_daily_candles(market, 10)
     dynamic_pct = calculate_dynamic_stop_pct(daily_candles)
 
-    # ATR 사전값 (BB 폭 프록시)
     pre_shock_atr = None
     if snap_15m:
         bb_u = snap_15m.get("bb_upper")
         bb_l = snap_15m.get("bb_lower")
         if bb_u and bb_l:
-            pre_shock_atr = (float(bb_u) - float(bb_l)) / 4  # BB/4 ≈ ATR 근사
+            pre_shock_atr = (float(bb_u) - float(bb_l)) / 4
 
     stop_loss = calculate_stop_loss(
         current_price, pre_shock_atr, sr_support, dynamic_pct, shock.level,
     )
 
-    pre_bb = await _get_pre_shock_bb_width(session, market)
-    pre_vol = await _get_pre_shock_volume_avg(session, market)
+    pre_bb = await _get_pre_shock_bb_width(market)
+    pre_vol = await _get_pre_shock_volume_avg(market)
 
     state = await enter_defense(
         market, shock.level, shock,
@@ -330,18 +272,15 @@ async def _detect_and_handle_shock(
 
     # 강도별 즉시 대응
     if shock.level == ShockLevel.PANIC:
-        # 전액 청산 권고
-        await _execute_sell(session, market, balance, "전액 (패닉)")
+        await _execute_sell(user_id, market, balance, "전액 (패닉)")
         state.partial_sold_pct = 100.0
         await _save_defense_state(state)
     elif shock.level == ShockLevel.DANGER:
-        # 50% 즉시 청산
         sell_vol = balance * 0.5
-        await _execute_sell(session, market, sell_vol, "50% (위험)")
+        await _execute_sell(user_id, market, sell_vol, "50% (위험)")
         state.partial_sold_pct = 50.0
         await _save_defense_state(state)
 
-    # 텔레그램 알림
     if chat_id:
         action = {
             ShockLevel.WARNING: "손절선 적용",
@@ -362,35 +301,34 @@ async def _detect_and_handle_shock(
             f"확신도: {llm_result.confidence:.0%}",
         )
 
-    await session.commit()
-
 
 async def _execute_sell(
-    session: AsyncSession,
+    user_id: int,
     market: str,
     volume: float,
     reason: str,
 ) -> None:
     """긴급 매도 — Redis 매매 큐로 전송."""
     await push_trade_job({
-        "type": "execute_trade",
-        "user_id": "master",
-        "content": {
+        "type": "place_order",
+        "user_id": str(user_id),
+        "payload": {
             "market": market,
             "side": "ask",
             "volume": str(volume),
             "ord_type": "market",
         },
     })
-    logger.info("shock_sell Redis push: %s vol=%s (%s)", market, volume, reason)
+    logger.info("shock_sell Redis push: user=%d %s vol=%s (%s)", user_id, market, volume, reason)
 
 
 # ── 방어 모드 관리 ──
 
 
 async def _manage_defense(
-    session: AsyncSession,
     settings: Settings,
+    user_id: int,
+    chat_id: str,
     market: str,
     currency: str,
     balance: float,
@@ -400,9 +338,12 @@ async def _manage_defense(
     if state is None:
         return
 
-    # 현재가 조회
+    # 현재가 조회 (1분봉에서 최신가)
     try:
-        price = await asyncio.to_thread(_get_ticker_sync, settings, market)
+        candles_1m = await asyncio.to_thread(
+            _get_candles_1m_sync, settings, market, 1,
+        )
+        price = float(candles_1m[-1].get("trade_price", 0)) if candles_1m else 0.0
     except Exception:
         return
 
@@ -410,7 +351,7 @@ async def _manage_defense(
         return
 
     # ATR 갱신 (15m BB 기반)
-    snap_15m = await _get_indicator_snapshot(session, market, "15m")
+    snap_15m = await _get_indicator_snapshot(market, "15m")
     current_atr = None
     if snap_15m:
         bb_u = snap_15m.get("bb_upper")
@@ -418,10 +359,8 @@ async def _manage_defense(
         if bb_u and bb_l:
             current_atr = (float(bb_u) - float(bb_l)) / 4
 
-    # 트레일링 갱신
     await update_trailing(market, price, current_atr)
 
-    # 손절선 이탈 체크
     if await check_stop_loss_hit(market, price):
         logger.warning(
             "shock: %s 손절선 이탈 — price=%.0f stop=%.0f",
@@ -429,11 +368,10 @@ async def _manage_defense(
         )
         remaining_pct = 100.0 - state.partial_sold_pct
         if remaining_pct > 0 and balance > 0:
-            await _execute_sell(session, market, balance, f"손절 ({remaining_pct:.0f}%)")
+            await _execute_sell(user_id, market, balance, f"손절 ({remaining_pct:.0f}%)")
             state.partial_sold_pct = 100.0
             await _save_defense_state(state)
 
-            chat_id = settings.telegram_chat_id
             if chat_id:
                 await publish_telegram(
                     chat_id,
@@ -445,11 +383,10 @@ async def _manage_defense(
                 )
 
         await exit_defense(market)
-        await session.commit()
         return
 
     # 복귀 조건 확인
-    snap_1h = await _get_indicator_snapshot(session, market, "1h")
+    snap_1h = await _get_indicator_snapshot(market, "1h")
     current_bb_width = None
     current_vol_avg = None
 
@@ -461,8 +398,7 @@ async def _manage_defense(
             current_bb_width = (float(bb_u) - float(bb_l)) / float(bb_m)
         current_vol_avg = float(snap_1h.get("volume_ratio", 0))
 
-    # LLM 재확인은 시간 조건 충족 시에만 (비용 절감)
-    from core.safety.defense_mode import _RECOVERY_MIN_HOURS
+    from safety.defense_mode import _RECOVERY_MIN_HOURS
     elapsed_h = (datetime.now(UTC) - state.entered_at).total_seconds() / 3600
     min_h = _RECOVERY_MIN_HOURS.get(state.level, 4)
 
@@ -477,7 +413,7 @@ async def _manage_defense(
                 volume_ratio=state.shock_signal.volume_ratio,
                 volatility_ratio=state.shock_signal.volatility_ratio,
                 gap_pct=state.shock_signal.gap_pct,
-                indicators_4h=await _get_indicator_snapshot(session, market, "4h"),
+                indicators_4h=await _get_indicator_snapshot(market, "4h"),
                 indicators_1h=snap_1h,
                 indicators_15m=snap_15m,
                 position_info=f"{currency} {balance}개 보유",
@@ -493,7 +429,6 @@ async def _manage_defense(
         market, current_bb_width, current_vol_avg, llm_ok,
     ):
         await exit_defense(market)
-        chat_id = settings.telegram_chat_id
         if chat_id:
             await publish_telegram(
                 chat_id,
@@ -507,38 +442,44 @@ async def _manage_defense(
 # ── 메인 루프 ──
 
 
-async def shock_monitor(
-    session_factory: async_sessionmaker[AsyncSession],
-    settings: Settings,
-) -> None:
-    """뉴스 충격 감지 모니터 루프 (1분 주기)."""
+async def shock_monitor(settings: Settings) -> None:
+    """뉴스 충격 감지 모니터 루프 (1분 주기).
+
+    유저별 포트폴리오를 DB에서 조회하여 감시.
+    """
     interval = settings.shock_monitor_interval_sec
     logger.info("shock_monitor: started (interval=%.0fs)", interval)
 
     try:
         while True:
             try:
-                accounts = await asyncio.to_thread(_get_balances_sync, settings)
-                held = [
-                    (acc["currency"], float(acc["balance"]))
-                    for acc in accounts
-                    if acc.get("currency") != "KRW"
-                    and float(acc.get("balance", 0)) > 0
-                ]
+                users = await get_active_users()
+                for user in users:
+                    user_id = user.get("id")
+                    chat_id = str(user.get("telegram_id", ""))
+                    if not user_id:
+                        continue
 
-                if held:
-                    async with session_factory() as session:
-                        for currency, balance in held:
-                            market = f"KRW-{currency}"
-                            if await is_defense_active(market):
-                                await _manage_defense(
-                                    session, settings, market, currency, balance,
-                                )
-                            else:
-                                await _detect_and_handle_shock(
-                                    session, settings, market, currency, balance,
-                                )
-                        await session.commit()
+                    portfolio = await get_user_portfolio(user_id)
+                    held = [
+                        (item["currency"], float(item["balance"]))
+                        for item in portfolio
+                        if item.get("currency") != "KRW"
+                        and float(item.get("balance", 0)) > 0
+                    ]
+
+                    for currency, balance in held:
+                        market = f"KRW-{currency}"
+                        if await is_defense_active(market):
+                            await _manage_defense(
+                                settings, user_id, chat_id,
+                                market, currency, balance,
+                            )
+                        else:
+                            await _detect_and_handle_shock(
+                                settings, user_id, chat_id,
+                                market, currency, balance,
+                            )
             except asyncio.CancelledError:
                 raise
             except Exception:

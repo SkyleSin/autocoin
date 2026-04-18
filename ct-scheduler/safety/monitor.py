@@ -6,57 +6,50 @@ import asyncio
 import logging
 from typing import Any
 
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
-from core.strategy.llm.emergency_prompt import build_emergency_prompt
+from infra.api.portfolio import get_user_portfolio
+from infra.api.signal import get_latest_signal
+from infra.api.user import get_active_users
 from infra.redis_client import get_redis
 from infra.redis_pubsub import publish_telegram
 from infra.redis_queue import push_trade_job
-from models.signal import Signal
+from safety.llm.emergency_prompt import build_emergency_prompt
 from utils.config import Settings
 
 logger = logging.getLogger(__name__)
 
 
-def _get_balances_sync(settings: Settings) -> list[dict[str, Any]]:
-    from bithumb.account import BithumbAccount
-    client = BithumbAccount(settings)
-    return client.get_balances()
-
-
 def _get_ticker_sync(settings: Settings, market: str) -> float:
-    from bithumb.ticker import BithumbTicker
-    client = BithumbTicker(settings)
-    data = client.get(market)
+    import httpx
+
+    url = f"{settings.bithumb_base_url}/v1/ticker"
+    params = {"markets": market}
+    resp = httpx.get(url, params=params, timeout=10)
+    resp.raise_for_status()
+    data = resp.json()
     if data and isinstance(data, list):
         return float(data[0].get("trade_price", 0))
     return 0.0
 
 
 async def _get_nearest_support(
-    session: AsyncSession, market: str,
+    market: str,
 ) -> tuple[float | None, dict[str, Any] | None]:
     """최근 시그널에서 지지선과 지표 정보 추출."""
-    last_signal = (await session.execute(
-        select(Signal)
-        .where(Signal.market == market)
-        .order_by(Signal.created_at.desc())
-        .limit(1)
-    )).scalar_one_or_none()
+    last_signal = await get_latest_signal(market)
 
-    if not last_signal or not last_signal.indicators:
+    if not last_signal or not last_signal.get("indicators"):
         return None, None
 
-    sr = last_signal.indicators.get("support_resistance")
+    indicators = last_signal["indicators"]
+    sr = indicators.get("support_resistance")
     if not sr or not isinstance(sr, dict):
-        return None, last_signal.indicators
+        return None, indicators
 
     support = sr.get("nearest_support")
     if support is None:
-        return None, last_signal.indicators
+        return None, indicators
 
-    return float(support), last_signal.indicators
+    return float(support), indicators
 
 
 async def _call_emergency_llm(
@@ -67,7 +60,7 @@ async def _call_emergency_llm(
 
     if settings.deepseek_api_key:
         try:
-            from core.strategy.llm.deepseek_llm import query_deepseek
+            from safety.llm.deepseek_llm import query_deepseek
             result = await query_deepseek(
                 prompt,
                 api_key=settings.deepseek_api_key,
@@ -79,7 +72,7 @@ async def _call_emergency_llm(
             logger.warning("긴급판단: DeepSeek 실패, Ollama 폴백", exc_info=True)
 
     if result is None:
-        from core.strategy.llm.local_llm import query_ollama
+        from safety.llm.local_llm import query_ollama
         result = await query_ollama(
             prompt,
             base_url=settings.ollama_base_url,
@@ -92,34 +85,33 @@ async def _call_emergency_llm(
 
 
 async def _execute_emergency_sell(
-    session: AsyncSession,
-    settings: Settings,
+    user_id: int,
     market: str,
     balance: float,
 ) -> None:
     """긴급 시장가 매도 — Redis 매매 큐로 전송."""
     await push_trade_job({
-        "type": "execute_trade",
-        "user_id": "master",
-        "content": {
+        "type": "place_order",
+        "user_id": str(user_id),
+        "payload": {
             "market": market,
             "side": "ask",
             "volume": str(balance),
             "ord_type": "market",
         },
     })
-    logger.info("긴급 매도 Redis push: %s vol=%s", market, balance)
+    logger.info("긴급 매도 Redis push: user=%d %s vol=%s", user_id, market, balance)
 
 
 async def _check_single_asset(
-    session: AsyncSession,
     settings: Settings,
+    user_id: int,
+    chat_id: str,
     currency: str,
     balance: float,
 ) -> None:
     """단일 보유 자산의 지지선 이탈 확인."""
     market = f"KRW-{currency}"
-    chat_id = settings.telegram_chat_id
 
     # 현재가 조회
     try:
@@ -132,7 +124,7 @@ async def _check_single_asset(
         return
 
     # 지지선 조회
-    support, indicators = await _get_nearest_support(session, market)
+    support, indicators = await _get_nearest_support(market)
     if support is None or support <= 0:
         return
 
@@ -203,8 +195,7 @@ async def _check_single_asset(
         return
 
     if llm_result.decision == "SELL":
-        # 자동 매도 실행
-        await _execute_emergency_sell(session, settings, market, balance)
+        await _execute_emergency_sell(user_id, market, balance)
         if chat_id:
             await publish_telegram(
                 chat_id,
@@ -217,7 +208,6 @@ async def _check_single_asset(
                 f"확신도: {llm_result.confidence:.0%}",
             )
     else:
-        # HOLD — 경고만
         if chat_id:
             await publish_telegram(
                 chat_id,
@@ -230,32 +220,36 @@ async def _check_single_asset(
             )
 
 
-async def safety_monitor(
-    session_factory: async_sessionmaker[AsyncSession],
-    settings: Settings,
-) -> None:
-    """보유 코인 지지선 이탈 감시 루프 (1분 주기)."""
+async def safety_monitor(settings: Settings) -> None:
+    """보유 코인 지지선 이탈 감시 루프 (1분 주기).
+
+    유저별 포트폴리오를 DB에서 조회하여 감시.
+    """
     interval = settings.safety_monitor_interval_sec
     logger.info("safety_monitor: started (interval=%.0fs)", interval)
 
     try:
         while True:
             try:
-                # 보유 자산 조회
-                accounts = await asyncio.to_thread(_get_balances_sync, settings)
-                held = [
-                    (acc["currency"], float(acc["balance"]))
-                    for acc in accounts
-                    if acc.get("currency") != "KRW" and float(acc.get("balance", 0)) > 0
-                ]
+                users = await get_active_users()
+                for user in users:
+                    user_id = user.get("id")
+                    chat_id = str(user.get("telegram_id", ""))
+                    if not user_id:
+                        continue
 
-                if held:
-                    async with session_factory() as session:
-                        for currency, balance in held:
-                            await _check_single_asset(
-                                session, settings, currency, balance,
-                            )
-                        await session.commit()
+                    portfolio = await get_user_portfolio(user_id)
+                    held = [
+                        (item["currency"], float(item["balance"]))
+                        for item in portfolio
+                        if item.get("currency") != "KRW"
+                        and float(item.get("balance", 0)) > 0
+                    ]
+
+                    for currency, balance in held:
+                        await _check_single_asset(
+                            settings, user_id, chat_id, currency, balance,
+                        )
             except asyncio.CancelledError:
                 raise
             except Exception:

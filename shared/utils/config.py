@@ -78,6 +78,15 @@ class Settings(BaseSettings):
         validation_alias="TELEGRAM_CHAT_ID",
     )
 
+    master_bot_token: str = Field(
+        default="",
+        validation_alias="MASTER_BOT_TOKEN",
+    )
+    master_telegram_id: str = Field(
+        default="",
+        validation_alias="MASTER_TELEGRAM_ID",
+    )
+
     ollama_base_url: str = Field(
         default="http://localhost:11434",
         validation_alias="OLLAMA_BASE_URL",

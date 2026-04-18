@@ -45,6 +45,8 @@ services:
       API_PORT: "8000"
       REDIS_URL: redis://ct-redis:6379/0
       ENCRYPT_KEY: ${ENCRYPT_KEY}
+      MASTER_BOT_TOKEN: ${MASTER_BOT_TOKEN}
+      MASTER_TELEGRAM_ID: ${MASTER_TELEGRAM_ID}
     env_file:
       - path: .env
         required: false
@@ -178,7 +180,8 @@ services:
       API_BASE_URL: http://ct-api:8000
       REDIS_URL: redis://ct-redis:6379/0
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
-      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
+      MASTER_BOT_TOKEN: ${MASTER_BOT_TOKEN}
+      MASTER_TELEGRAM_ID: ${MASTER_TELEGRAM_ID}
       ENCRYPT_KEY: ${ENCRYPT_KEY}
     env_file:
       - path: .env

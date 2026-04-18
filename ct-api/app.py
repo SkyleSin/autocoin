@@ -14,11 +14,11 @@ from fastapi import FastAPI
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from infra.redis_pubsub import publish_telegram
 from models.active_alert import ActiveAlert
 from models.app_config import AppConfig
 from models.candle import Candle
 from models.indicator_snapshot import IndicatorSnapshot
+from models.market import Market
 from models.pattern_accuracy import PatternAccuracy
 from models.pattern_config import PatternConfig
 from models.pattern_evaluation import PatternEvaluation
@@ -27,11 +27,13 @@ from models.signal import Signal
 from models.tracked_asset import TrackedAsset
 from models.trade import Trade
 from models.user import User
+from models.user_portfolio import UserPortfolio
 from routers.active_alerts import router as active_alerts_router
 from routers.candles import router as candles_router
 from routers.config import router as config_router
 from routers.indicator_snapshots import router as snapshots_router
 from routers.indicator_weights import router as indicator_weights_router
+from routers.markets import router as markets_router
 from routers.pattern_accuracy import router as pattern_accuracy_router
 from routers.pattern_configs import router as pattern_configs_router
 from routers.pattern_evaluations import router as pattern_evaluations_router
@@ -39,9 +41,9 @@ from routers.reports import router as reports_router
 from routers.shadow import router as shadow_router
 from routers.signals import router as signals_router
 from routers.tracked_assets import router as tracked_assets_router
+from routers.portfolios import router as portfolios_router
 from routers.trades import router as trades_router
 from routers.users import router as users_router
-from services.config_service import load_risk_settings
 from utils.config import Settings
 from utils.logging_setup import setup_logging
 
@@ -85,6 +87,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 ShadowTrade.__table__,
                 ShadowPortfolio.__table__,
                 IndicatorSnapshot.__table__,
+                UserPortfolio.__table__,
+                Market.__table__,
             ):
                 await conn.run_sync(
                     lambda sync_conn, t=table: t.create(sync_conn, checkfirst=True),
@@ -109,6 +113,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 ADD COLUMN IF NOT EXISTS closed_at TIMESTAMPTZ DEFAULT NULL,
                 ADD COLUMN IF NOT EXISTS quality_score FLOAT DEFAULT NULL
             """))
+            # users에서 strategy_type, strategy_params 컬럼 제거
+            await conn.execute(text("""
+                ALTER TABLE users
+                DROP COLUMN IF EXISTS strategy_type,
+                DROP COLUMN IF EXISTS strategy_params
+            """))
+            # users에 risk_settings JSONB 추가
+            await conn.execute(text("""
+                ALTER TABLE users
+                ADD COLUMN IF NOT EXISTS risk_settings JSONB
+                DEFAULT '{"max_per_trade_pct": 15.0, "max_daily_trades": 30, "min_krw_reserve": 100000}'::jsonb
+            """))
             # signals/trades/active_alerts에 user_id 컬럼 추가
             await conn.execute(text("""
                 ALTER TABLE signals
@@ -122,13 +138,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 ALTER TABLE active_alerts
                 ADD COLUMN IF NOT EXISTS user_id INT DEFAULT NULL
             """))
-        # DB에서 리스크 설정 로드
-        async with session_factory() as session:
-            changed = await load_risk_settings(session, settings)
-            if changed:
-                logger.info("DB에서 리스크 설정 로드: %s", changed)
-
-        # 유저 + 기본 설정 시드
+        # 유저 시드
         await _seed_users(session_factory, settings)
 
         app.state.settings = settings
@@ -141,8 +151,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         logger.info("ct-api 시작 (DDL + API only)")
 
-        # 서버 시작 텔레그램 알림
-        if settings.telegram_bot_token and settings.telegram_chat_id:
+        # 서버 시작 텔레그램 알림 (master 봇)
+        if settings.master_bot_token and settings.master_telegram_id:
             await _send_startup_alert(session_factory, settings)
 
         yield
@@ -167,7 +177,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(indicator_weights_router)
     app.include_router(pattern_accuracy_router)
     app.include_router(pattern_configs_router)
+    app.include_router(markets_router)
     app.include_router(pattern_evaluations_router)
+    app.include_router(portfolios_router)
     app.include_router(reports_router)
     app.include_router(shadow_router)
     return app
@@ -189,20 +201,8 @@ async def _seed_users(
     session_factory: async_sessionmaker[AsyncSession],
     settings: Settings,
 ) -> None:
-    """Skyle 유저 시드 + 시스템 기본 리스크 설정."""
-    from services.config_service import set_config
-
+    """Skyle 유저 시드."""
     async with session_factory() as session:
-        # 시스템 기본 리스크 설정 (user_id=0)
-        defaults = {
-            "risk_max_per_trade_pct": str(settings.risk_max_per_trade_pct),
-            "risk_max_daily_trades": str(settings.risk_max_daily_trades),
-            "risk_min_krw_reserve": str(settings.risk_min_krw_reserve),
-            "alert_remind_interval_sec": str(settings.alert_remind_interval_sec),
-        }
-        for key, value in defaults.items():
-            await set_config(session, key, value, user_id=0)
-
         # ── Skyle ──
         if not settings.encrypt_key:
             logger.warning("ENCRYPT_KEY 또는 TELEGRAM_CHAT_ID 미설정 — Skyle 유저 시드 스킵")
@@ -221,7 +221,6 @@ async def _seed_users(
                 bithumb_secret_key=encrypt(
                     settings.bithumb_secret_key, settings.encrypt_key,
                 ),
-                strategy_type="topdown_mtf",
                 coin_watchlist=[],
             ))
             await session.commit()
@@ -232,52 +231,26 @@ async def _send_startup_alert(
     session_factory: async_sessionmaker[AsyncSession],
     settings: Settings,
 ) -> None:
-    """서버 시작 시 현재 상태를 텔레그램으로 전송."""
-    chat_id = settings.telegram_chat_id
+    """서버 시작 시 현재 상태를 master 봇으로 전송."""
+    from infra.redis_pubsub import publish_master
+
+    chat_id = settings.master_telegram_id
 
     try:
         async with session_factory() as session:
-            # 추적 자산
             assets = (await session.execute(
                 select(TrackedAsset).where(TrackedAsset.is_active.is_(True))
             )).scalars().all()
             asset_list = ", ".join(f"`{a.market}`" for a in assets) if assets else "없음"
 
-            # 최근 시그널
             last_signal = (await session.execute(
                 select(Signal).order_by(Signal.created_at.desc()).limit(1)
             )).scalar_one_or_none()
 
-        # LLM 모델 표시
-        main_llm = (
-            f"`{settings.deepseek_model}`"
-            if settings.deepseek_api_key
-            else f"`{settings.ollama_model}`"
-        )
-        sub_llm = (
-            f"`{settings.ollama_model}`"
-            if settings.deepseek_api_key
-            else "없음"
-        )
-
-        msg = f"""🚀 *autocoin 서버 시작*
+        msg = f"""🚀 *autocoin v2 서버 시작*
 
 📋 *추적 자산:* {asset_list}
-⏱️ *캔들 분석 주기:* {settings.candle_interval_sec:.0f}초
-🛡️ *안전장치 감시:* {settings.safety_monitor_interval_sec:.0f}초 간격
-🤖 *Main LLM:* {main_llm}
-🔄 *Sub LLM (폴백):* {sub_llm}
-👷 *워커:* {settings.job_worker_count}개
-
-⚙️ *리스크 설정:*
-• 1회 매매 상한: 잔고의 `{settings.risk_max_per_trade_pct}%`
-• 일일 매매 횟수: `{settings.risk_max_daily_trades}회`
-• 최소 유지 잔고: `{settings.risk_min_krw_reserve:,.0f}원`
-
-🛡️ *안전장치:*
-• 즉시 트리거: 지지선 `{settings.safety_breach_immediate_pct}%+` 이탈
-• 연속 트리거: `{settings.safety_breach_consecutive_pct}%+`\
- × `{settings.safety_breach_consecutive_count}분`"""
+🛡️ *안전장치 감시:* {settings.safety_monitor_interval_sec:.0f}초 간격"""
 
         if last_signal:
             msg += (
@@ -287,7 +260,7 @@ async def _send_startup_alert(
                 f"  {last_signal.created_at:%Y-%m-%d %H:%M:%S}"
             )
 
-        await publish_telegram(chat_id, msg)
+        await publish_master(chat_id, msg)
     except Exception:
         logger.warning("서버 시작 텔레그램 알림 실패", exc_info=True)
 

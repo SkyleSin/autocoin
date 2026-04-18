@@ -8,10 +8,9 @@ import logging
 from dataclasses import dataclass
 
 from infra.api.signal import close_opposite_signals, create_signal
-from infra.api.user import get_active_users, get_user_full
+from infra.api.user import get_active_users
 from infra.redis_client import get_redis
 from utils.config import Settings
-from utils.user_utils import get_user_settings_from_dict
 
 from strategy.base import get_strategy
 from strategy.signal_notifier import notify_signal
@@ -69,11 +68,7 @@ async def _handle_event(event: StrategyEvent, settings: Settings) -> None:
         if watchlist and event.market not in watchlist:
             continue
         try:
-            full = await get_user_full(user_data["id"])
-            if not full:
-                continue
-            user_settings = get_user_settings_from_dict(full, settings)
-            await _evaluate_for_user(event, user_settings, full)
+            await _evaluate_for_user(event, settings, user_data)
         except Exception:
             logger.exception("유저 %s 전략 평가 실패", user_data.get("username"))
 

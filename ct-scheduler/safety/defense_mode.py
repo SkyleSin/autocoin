@@ -7,14 +7,11 @@ import logging
 import statistics
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import Any
 
 from infra.redis_client import get_redis
 
 from .shock_detector import ShockLevel, ShockSignal
-
-if TYPE_CHECKING:
-    from models.candle import Candle
 
 logger = logging.getLogger(__name__)
 
@@ -145,21 +142,21 @@ async def get_all_defense_states() -> dict[str, DefenseState]:
     return result
 
 
-def calculate_dynamic_stop_pct(daily_candles: list[Candle]) -> float:
+def calculate_dynamic_stop_pct(daily_candles: list[dict[str, Any]]) -> float:
     """최근 7일 일봉 ATR → 동적 손절 기준%.
 
     ATR / 현재가 × 100 × 1.5, 클램핑 4%~10%.
     """
-    from core.analysis.atr import atr_from_candles
+    from analysis.atr import atr_from_candles
 
     if not daily_candles:
-        return _MAX_STOP_PCT  # 데이터 없으면 보수적
+        return _MAX_STOP_PCT
 
     atr_val = atr_from_candles(daily_candles, period=min(7, len(daily_candles) - 1))
     if atr_val is None or atr_val <= 0:
         return _MAX_STOP_PCT
 
-    current_price = float(daily_candles[-1].close)
+    current_price = float(daily_candles[-1]["close"])
     if current_price <= 0:
         return _MAX_STOP_PCT
 

@@ -17,11 +17,11 @@ logger = logging.getLogger("ct-telegram.subscriber")
 
 
 async def send_message_subscriber(settings: Settings) -> None:
-    """Redis Pub/Sub 루프 — send_message 채널 구독 후 텔레그램 발송."""
+    """Redis Pub/Sub 루프 — send_message + send_master 채널 구독."""
     r = get_redis()
     pubsub = r.pubsub()
-    await pubsub.subscribe("send_message")
-    logger.info("send_message 채널 구독 시작")
+    await pubsub.subscribe("send_message", "send_master")
+    logger.info("send_message/send_master 채널 구독 시작")
 
     try:
         while True:
@@ -38,22 +38,32 @@ async def send_message_subscriber(settings: Settings) -> None:
                 logger.warning("잘못된 메시지 형식: %s", msg)
                 continue
 
+            channel = (
+                msg.get("channel", b"").decode()
+                if isinstance(msg.get("channel"), bytes)
+                else msg.get("channel", "")
+            )
+
             try:
-                await _dispatch(settings, payload)
+                token = (
+                    settings.master_bot_token
+                    if channel == "send_master"
+                    else settings.telegram_bot_token
+                )
+                await _dispatch(token, payload)
             except Exception:
                 logger.exception("메시지 처리 실패: %s", payload.get("type"))
 
     except asyncio.CancelledError:
         pass
     finally:
-        await pubsub.unsubscribe("send_message")
+        await pubsub.unsubscribe("send_message", "send_master")
         await pubsub.aclose()
-        logger.info("send_message 구독 종료")
+        logger.info("send_message/send_master 구독 종료")
 
 
-async def _dispatch(settings: Settings, payload: dict[str, Any]) -> None:
+async def _dispatch(token: str, payload: dict[str, Any]) -> None:
     """메시지 타입별 분기."""
-    token = settings.telegram_bot_token
     msg_type = payload.get("type", "text")
     chat_id = payload.get("chat_id", "")
 

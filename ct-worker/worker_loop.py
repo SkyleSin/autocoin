@@ -10,7 +10,9 @@ import json
 from handlers.account import handle_check_balance, handle_get_balance
 from handlers.candle import handle_collect_candles
 from handlers.market import handle_get_markets, handle_get_ticker
+from handlers.market_sync import handle_sync_markets
 from handlers.order import handle_cancel_order, handle_check_order, handle_place_order
+from handlers.portfolio import handle_sync_portfolio
 from infra.api.user import get_user_full
 from infra.redis_client import get_redis
 from infra.redis_queue import poll_delayed_jobs, pop_trade_job, push_trade_job
@@ -61,6 +63,10 @@ async def trade_worker(settings: Settings, shutdown: asyncio.Event, name: str) -
                 await handle_check_order(payload, user_settings)
             elif job_type == "cancel_order":
                 await handle_cancel_order(payload, user_settings)
+            elif job_type == "sync_portfolio":
+                await handle_sync_portfolio(payload, user_settings)
+            elif job_type == "sync_markets":
+                await handle_sync_markets(payload, user_settings)
             else:
                 log.warning("Job 핸들러 미구현: %s", job_type)
 
