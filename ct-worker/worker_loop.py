@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from handlers.candle import handle_collect_candles
 from infra.api.user import get_user_full
 from infra.redis_queue import poll_delayed_jobs, pop_trade_job, push_trade_job
 from infra.redis_rate_limit import wait_for_rate_limit
@@ -33,8 +34,11 @@ async def trade_worker(settings: Settings, shutdown: asyncio.Event, name: str) -
 
             await wait_for_rate_limit(user_id)
 
-            # TODO: 주문 흐름 설계 후 핸들러 연결
-            log.warning("Job 핸들러 미구현: %s", job_type)
+            if job_type == "collect_candles":
+                await handle_collect_candles(job_data.get("payload", {}), user_settings)
+            else:
+                # TODO: 주문 흐름 설계 후 핸들러 연결
+                log.warning("Job 핸들러 미구현: %s", job_type)
 
         except Exception:
             log.exception("Job 처리 실패: %s", job_data)

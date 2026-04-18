@@ -15,10 +15,23 @@ CHANNEL = "send_message"
 EVENT_CHANNEL = "worker_events"
 
 
+ANALYSIS_CHANNEL = "analysis_ready"
+ADVISOR_CHANNEL = "advisor_request"
+
+
 async def publish_event(event: dict[str, Any]) -> None:
     """ct-worker 이벤트를 Redis 채널로 발행 (다른 컨테이너가 구독)."""
     r = get_redis()
     await r.publish(EVENT_CHANNEL, json.dumps(event, ensure_ascii=False))
+
+
+async def publish_analysis_ready(market: str, timeframe: str) -> None:
+    """지표 스냅샷 저장 완료 → ct-strategy에 전략 평가 요청."""
+    r = get_redis()
+    await r.publish(
+        ANALYSIS_CHANNEL,
+        json.dumps({"market": market, "timeframe": timeframe}, ensure_ascii=False),
+    )
 
 
 async def publish_telegram(
@@ -79,7 +92,7 @@ async def publish_signal_alert(
     force_full_sell: bool,
     chart_bytes: bytes | None = None,
 ) -> None:
-    """시그널 원시 데이터를 Redis 채널로 발행 (포맷은 ct-telegram 담당)."""
+    """시그널 → ct-advisor 채널로 발행 (리스크/포지셔닝 처리 후 ct-telegram 전달)."""
     if not chat_id:
         return
     msg: dict[str, Any] = {
@@ -95,5 +108,11 @@ async def publish_signal_alert(
         "force_full_sell": force_full_sell,
         "chart_b64": base64.b64encode(chart_bytes).decode() if chart_bytes else None,
     }
+    r = get_redis()
+    await r.publish(ADVISOR_CHANNEL, json.dumps(msg, ensure_ascii=False))
+
+
+async def publish_to_telegram(msg: dict[str, Any]) -> None:
+    """ct-advisor가 처리 완료된 메시지를 ct-telegram(send_message)으로 전달."""
     r = get_redis()
     await r.publish(CHANNEL, json.dumps(msg, ensure_ascii=False))

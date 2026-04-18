@@ -1,0 +1,181 @@
+# base 이미지 빌드: docker build -f docker/Dockerfile.base -t autocoin-base .
+services:
+  # ── 인프라 ──
+  ct-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-autocoin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-autocoin}
+      POSTGRES_DB: ${POSTGRES_DB:-autocoin}
+    volumes:
+      - /cache/autocoin/pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - internal
+    ports:
+      - "${POSTGRES_PUBLISH_PORT:-5432}:5432"
+
+  ct-redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - /cache/autocoin/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - internal
+
+  # ── ct-api: DB gateway (CRUD only) ──
+  ct-api:
+    build:
+      context: .
+      dockerfile: ct-api/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-autocoin}:${POSTGRES_PASSWORD:-autocoin}@ct-db:5432/${POSTGRES_DB:-autocoin}
+      API_HOST: 0.0.0.0
+      API_PORT: "8000"
+      REDIS_URL: redis://ct-redis:6379/0
+      ENCRYPT_KEY: ${ENCRYPT_KEY}
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - ./log:/app/log
+    ports:
+      - "${API_PUBLISH_PORT:-8000}:8000"
+    depends_on:
+      ct-db:
+        condition: service_healthy
+      ct-redis:
+        condition: service_healthy
+    networks:
+      - internal
+
+  # ── ct-scheduler: 봉 수집 트리거 + 지표 분석 + safety/shock ──
+  ct-scheduler:
+    build:
+      context: .
+      dockerfile: ct-scheduler/Dockerfile
+    environment:
+      API_BASE_URL: http://ct-api:8000
+      REDIS_URL: redis://ct-redis:6379/0
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+    env_file:
+      - path: .env
+        required: false
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./log:/app/log
+    depends_on:
+      ct-api:
+        condition: service_started
+      ct-redis:
+        condition: service_healthy
+    networks:
+      - internal
+
+  # ── ct-strategy: 탑다운 MTF 전략 평가 ──
+  ct-strategy:
+    build:
+      context: .
+      dockerfile: ct-strategy/Dockerfile
+    environment:
+      API_BASE_URL: http://ct-api:8000
+      REDIS_URL: redis://ct-redis:6379/0
+      ENCRYPT_KEY: ${ENCRYPT_KEY}
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - ./log:/app/log
+    depends_on:
+      ct-api:
+        condition: service_started
+      ct-redis:
+        condition: service_healthy
+    networks:
+      - internal
+
+  # ── ct-advisor: 리스크 관리 + 포지션 사이징 ──
+  ct-advisor:
+    build:
+      context: .
+      dockerfile: ct-advisor/Dockerfile
+    environment:
+      API_BASE_URL: http://ct-api:8000
+      REDIS_URL: redis://ct-redis:6379/0
+      ENCRYPT_KEY: ${ENCRYPT_KEY}
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - ./log:/app/log
+    depends_on:
+      ct-api:
+        condition: service_started
+      ct-redis:
+        condition: service_healthy
+    networks:
+      - internal
+
+  # ── ct-worker: 빗썸 API 전담 ──
+  ct-worker:
+    build:
+      context: .
+      dockerfile: ct-worker/Dockerfile
+    environment:
+      API_BASE_URL: http://ct-api:8000
+      REDIS_URL: redis://ct-redis:6379/0
+      BITHUMB_API_KEY: ${BITHUMB_API_KEY}
+      BITHUMB_SECRET_KEY: ${BITHUMB_SECRET_KEY}
+      BITHUMB_BASE_URL: ${BITHUMB_BASE_URL:-https://api.bithumb.com}
+      ENCRYPT_KEY: ${ENCRYPT_KEY}
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - ./log:/app/log
+    depends_on:
+      ct-api:
+        condition: service_started
+      ct-redis:
+        condition: service_healthy
+    networks:
+      - internal
+
+  # ── ct-telegram: 텔레그램 봇 ──
+  ct-telegram:
+    build:
+      context: .
+      dockerfile: ct-telegram/Dockerfile
+    environment:
+      API_BASE_URL: http://ct-api:8000
+      REDIS_URL: redis://ct-redis:6379/0
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
+      ENCRYPT_KEY: ${ENCRYPT_KEY}
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - ./log:/app/log
+    depends_on:
+      ct-api:
+        condition: service_started
+      ct-redis:
+        condition: service_healthy
+    networks:
+      - internal
+
+networks:
+  internal:
+    driver: bridge
