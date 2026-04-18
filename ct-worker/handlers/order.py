@@ -64,6 +64,7 @@ async def handle_place_order(payload: dict, settings: Settings) -> None:
     volume = payload.get("volume")
     price = payload.get("price")
     ord_type = payload.get("ord_type", "limit")
+    defense_reason = payload.get("defense_reason")
     chat_id = payload.get("chat_id", settings.telegram_chat_id)
 
     if not market or side not in ("bid", "ask"):
@@ -96,17 +97,17 @@ async def handle_place_order(payload: dict, settings: Settings) -> None:
 
     # 30초 후 체결 확인 예약
     if order_uuid:
+        check_payload: dict[str, Any] = {
+            "uuid": order_uuid,
+            "market": market,
+            "side": side,
+            "retry_count": 0,
+            "chat_id": chat_id,
+        }
+        if defense_reason:
+            check_payload["defense_reason"] = defense_reason
         await push_delayed_job(
-            {
-                "type": "check_order",
-                "payload": {
-                    "uuid": order_uuid,
-                    "market": market,
-                    "side": side,
-                    "retry_count": 0,
-                    "chat_id": chat_id,
-                },
-            },
+            {"type": "check_order", "payload": check_payload},
             execute_at=time.time() + CHECK_DELAY_SEC,
         )
 
@@ -125,6 +126,7 @@ async def handle_check_order(payload: dict, settings: Settings) -> None:
     market = payload.get("market", "")
     side = payload.get("side", "")
     retry_count = payload.get("retry_count", 0)
+    defense_reason = payload.get("defense_reason")
     chat_id = payload.get("chat_id", settings.telegram_chat_id)
 
     if not order_uuid:
@@ -147,16 +149,20 @@ async def handle_check_order(payload: dict, settings: Settings) -> None:
 
         coin_currency = market.split("-")[1] if "-" in market else ""
 
+        trade_data: dict[str, Any] = {
+            "market": market,
+            "side": "buy" if side == "bid" else "sell",
+            "volume": executed_vol,
+            "price_krw": str(round(avg_price, 4)) if avg_price else None,
+            "status": "done",
+            "exchange_order_id": order_uuid,
+            "payload": data,
+        }
+        if defense_reason:
+            trade_data["notes"] = f"defense:{defense_reason}"
+
         try:
-            await create_trade({
-                "market": market,
-                "side": "buy" if side == "bid" else "sell",
-                "volume": executed_vol,
-                "price_krw": str(round(avg_price, 4)) if avg_price else None,
-                "status": "done",
-                "exchange_order_id": order_uuid,
-                "payload": data,
-            })
+            await create_trade(trade_data)
         except Exception:
             logger.exception("Trade 기록 실패: %s", order_uuid)
 
@@ -179,20 +185,23 @@ async def handle_check_order(payload: dict, settings: Settings) -> None:
     elif state in ("wait", "watch"):
         if retry_count < MAX_RETRY:
             # 재확인 예약
+            retry_payload: dict[str, Any] = {
+                "uuid": order_uuid,
+                "market": market,
+                "side": side,
+                "retry_count": retry_count + 1,
+                "chat_id": chat_id,
+            }
+            if defense_reason:
+                retry_payload["defense_reason"] = defense_reason
             await push_delayed_job(
-                {
-                    "type": "check_order",
-                    "payload": {
-                        "uuid": order_uuid,
-                        "market": market,
-                        "side": side,
-                        "retry_count": retry_count + 1,
-                        "chat_id": chat_id,
-                    },
-                },
+                {"type": "check_order", "payload": retry_payload},
                 execute_at=time.time() + CHECK_DELAY_SEC,
             )
-            logger.info("check_order: %s 미체결, 재확인 예약 (%d/%d)", market, retry_count + 1, MAX_RETRY)
+            logger.info(
+                "check_order: %s 미체결, 재확인 예약 (%d/%d)",
+                market, retry_count + 1, MAX_RETRY,
+            )
         elif chat_id:
             # 재확인 소진 → 사용자에게 선택권
             remaining = data.get("remaining_volume", "?")

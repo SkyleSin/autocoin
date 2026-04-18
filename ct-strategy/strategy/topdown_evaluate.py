@@ -16,10 +16,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# ── 4H 방향 게이트 파라미터 ──
-_GAP_4H = 0.5
-_THRESHOLD_BUY = 2.5
-_THRESHOLD_SELL = 1.8
+# ── 4H 방향 게이트 파라미터 (2026-04-19 백테스트 비례 조정) ──
+_GAP_4H = 1.43
+_THRESHOLD_BUY = 7.14
+_THRESHOLD_SELL = 5.38
 
 # ── 1H 부스트 파라미터 ──
 _BOOST_WEIGHT = 0.4

@@ -6,9 +6,11 @@ import logging
 from typing import Any
 
 from infra.api.active_alert import mark_alert_acted, mark_alert_passed
+from infra.redis_client import get_redis
 from infra.redis_queue import push_trade_job
-from telegram.bot import answer_callback, send_message
 from utils.config import Settings
+
+from telegram.bot import answer_callback, send_message
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +61,16 @@ async def _handle_trade_execute(
     token: str, chat_id: str, market: str, side: str, price: float,
 ) -> None:
     """매수 실행 → ct-worker에 check_balance Job 전달."""
+    if side == "BUY":
+        r = get_redis()
+        if await r.exists(f"defense:{market}"):
+            await send_message(
+                token, chat_id,
+                f"🛡️ `{market}` 방어 모드 활성 중 — 매수가 차단되었습니다.",
+            )
+            logger.warning("trade_execute 차단: %s 방어 모드 활성", market)
+            return
+
     await push_trade_job({
         "type": "check_balance",
         "payload": {

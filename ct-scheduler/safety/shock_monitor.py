@@ -7,6 +7,16 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
+from infra.api.candle import get_candles
+from infra.api.indicator_snapshot import get_latest_snapshot
+from infra.api.portfolio import get_user_portfolio
+from infra.api.signal import get_latest_signal
+from infra.api.user import get_active_users
+from infra.redis_client import get_redis
+from infra.redis_pubsub import publish_telegram
+from infra.redis_queue import push_trade_job
+from utils.config import Settings
+
 from safety.defense_mode import (
     ShockLevel,
     calculate_dynamic_stop_pct,
@@ -22,22 +32,13 @@ from safety.defense_mode import (
 from safety.defense_mode import (
     _save_state as _save_defense_state,
 )
+from safety.llm.shock_prompt import build_shock_prompt
 from safety.shock_detector import (
     classify_shock,
     detect_price_gap,
     detect_volatility_surge,
     detect_volume_surge,
 )
-from safety.llm.shock_prompt import build_shock_prompt
-from infra.api.candle import get_candles
-from infra.api.indicator_snapshot import get_latest_snapshot
-from infra.api.portfolio import get_user_portfolio
-from infra.api.signal import get_latest_signal
-from infra.api.user import get_active_users
-from infra.redis_client import get_redis
-from infra.redis_pubsub import publish_telegram
-from infra.redis_queue import push_trade_job
-from utils.config import Settings
 
 logger = logging.getLogger(__name__)
 
@@ -317,6 +318,7 @@ async def _execute_sell(
             "side": "ask",
             "volume": str(volume),
             "ord_type": "market",
+            "defense_reason": reason,
         },
     })
     logger.info("shock_sell Redis push: user=%d %s vol=%s (%s)", user_id, market, volume, reason)
