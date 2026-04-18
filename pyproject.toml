@@ -19,6 +19,8 @@ dependencies = [
     "mplfinance>=0.12",
     "pandas>=2.0",
     "PyJWT>=2.8",
+    "redis[hiredis]>=5.0",
+    "cryptography>=42.0",
 ]
 
 [project.scripts]
@@ -29,19 +31,20 @@ dev = ["pre-commit", "ruff"]
 
 [tool.hatch.build.targets.wheel]
 packages = [
-  "src/core",
-  "src/job_runner",
-  "src/bithumb",
-  "src/models",
-  "src/schemas",
-  "src/services",
-  "src/routers",
-  "src/telegram",
-  "src/utils",
+  "shared/core",
+  "shared/infra",
+  "shared/job_runner",
+  "shared/bithumb",
+  "shared/models",
+  "shared/services",
+  "shared/utils",
+  "ct-api/src/routers",
+  "ct-api/src/schemas",
+  "ct-telegram/src/telegram",
 ]
 
 [tool.hatch.build.targets.wheel.force-include]
-"src/app.py" = "app.py"
+"ct-api/src/app.py" = "app.py"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

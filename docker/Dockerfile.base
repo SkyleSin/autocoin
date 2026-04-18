@@ -1,0 +1,11 @@
+# 공통 베이스 — 의존성 설치만 (소스 복사 안 함)
+FROM python:3.12-slim-bookworm AS base
+
+WORKDIR /app
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+COPY pyproject.toml README.md ./
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir .

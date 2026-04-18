@@ -1,5 +1,6 @@
-# DB 컨테이너 DNS 이름 = 아래 서비스 키(예: ct-db). 키를 바꾸면 POSTGRES_INTERNAL_HOST 기본값도 같이 바꿀 것.
+# base 이미지 빌드: docker build -f docker/Dockerfile.base -t autocoin-base .
 services:
+  # ── 인프라 ──
   ct-db:
     image: postgres:16-alpine
     environment:
@@ -18,18 +19,31 @@ services:
     ports:
       - "${POSTGRES_PUBLISH_PORT:-5432}:5432"
 
+  ct-redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - /cache/autocoin/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - internal
+
+  # ── 서비스 ──
   ct-api:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: ct-api/Dockerfile
     environment:
-      # .env의 DATABASE_URL(127.0.0.1)보다 우선. 호스트는 DB 서비스 이름과 동일하게(기본: ct-db)
       POSTGRES_INTERNAL_HOST: ${POSTGRES_INTERNAL_HOST:-ct-db}
       DATABASE_URL: ${DATABASE_URL_DOCKER:-postgresql+asyncpg://${POSTGRES_USER:-autocoin}:${POSTGRES_PASSWORD:-autocoin}@${POSTGRES_INTERNAL_HOST:-ct-db}:5432/${POSTGRES_DB:-autocoin}}
       API_HOST: ${API_HOST:-0.0.0.0}
       API_PORT: ${API_PORT:-8000}
-      # 컨테이너에서 호스트의 Ollama 접근
-      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      REDIS_URL: redis://ct-redis:6379/0
+      ENCRYPT_KEY: ${ENCRYPT_KEY}
     env_file:
       - path: .env
         required: false
@@ -37,10 +51,104 @@ services:
       - ./log:/app/log
     ports:
       - "${API_PUBLISH_PORT:-8000}:${API_PORT:-8000}"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     depends_on:
       ct-db:
+        condition: service_healthy
+      ct-redis:
+        condition: service_healthy
+    networks:
+      - internal
+
+  ct-scheduler:
+    build:
+      context: .
+      dockerfile: ct-scheduler/Dockerfile
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-autocoin}:${POSTGRES_PASSWORD:-autocoin}@ct-db:5432/${POSTGRES_DB:-autocoin}
+      REDIS_URL: redis://ct-redis:6379/0
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      BITHUMB_API_KEY: ${BITHUMB_API_KEY}
+      BITHUMB_SECRET_KEY: ${BITHUMB_SECRET_KEY}
+      ENCRYPT_KEY: ${ENCRYPT_KEY}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./log:/app/log
+    depends_on:
+      ct-db:
+        condition: service_healthy
+      ct-redis:
+        condition: service_healthy
+    networks:
+      - internal
+
+  ct-strategy:
+    build:
+      context: .
+      dockerfile: ct-strategy/Dockerfile
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      API_BASE_URL: http://ct-api:8000
+      REDIS_URL: redis://ct-redis:6379/0
+      ENCRYPT_KEY: ${ENCRYPT_KEY}
+    volumes:
+      - ./log:/app/log
+    depends_on:
+      ct-api:
+        condition: service_started
+      ct-redis:
+        condition: service_healthy
+    networks:
+      - internal
+
+  ct-worker:
+    build:
+      context: .
+      dockerfile: ct-worker/Dockerfile
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      API_BASE_URL: http://ct-api:8000
+      REDIS_URL: redis://ct-redis:6379/0
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-20}
+      ENCRYPT_KEY: ${ENCRYPT_KEY}
+    volumes:
+      - ./log:/app/log
+    depends_on:
+      ct-api:
+        condition: service_started
+      ct-redis:
+        condition: service_healthy
+    deploy:
+      replicas: ${WORKER_REPLICAS:-2}
+    networks:
+      - internal
+
+  ct-telegram:
+    build:
+      context: .
+      dockerfile: ct-telegram/Dockerfile
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      API_BASE_URL: http://ct-api:8000
+      REDIS_URL: redis://ct-redis:6379/0
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
+      ENCRYPT_KEY: ${ENCRYPT_KEY}
+    volumes:
+      - ./log:/app/log
+    depends_on:
+      ct-api:
+        condition: service_started
+      ct-redis:
         condition: service_healthy
     networks:
       - internal
@@ -48,5 +156,3 @@ services:
 networks:
   internal:
     driver: bridge
-
-volumes: {}
