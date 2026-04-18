@@ -12,6 +12,13 @@ from infra.redis_client import get_redis
 logger = logging.getLogger(__name__)
 
 CHANNEL = "send_message"
+EVENT_CHANNEL = "worker_events"
+
+
+async def publish_event(event: dict[str, Any]) -> None:
+    """ct-worker 이벤트를 Redis 채널로 발행 (다른 컨테이너가 구독)."""
+    r = get_redis()
+    await r.publish(EVENT_CHANNEL, json.dumps(event, ensure_ascii=False))
 
 
 async def publish_telegram(
