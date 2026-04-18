@@ -1,4 +1,4 @@
-"""잔고 조회 핸들러 — 빗썸 계좌 잔고 조회 → Redis 응답 or ct-api 저장."""
+"""잔고 조회 핸들러 — 빗썸 계좌 잔고 조회."""
 
 from __future__ import annotations
 
@@ -22,24 +22,27 @@ def _fetch_sync(settings: Settings) -> list[dict[str, Any]]:
         client.close()
 
 
-async def handle_check_balance(payload: dict, settings: Settings) -> None:
-    """check_balance Job — 잔고 조회 후 텔레그램 응답 또는 주문 진행.
+async def handle_check_balance(
+    payload: dict, settings: Settings,
+) -> dict[str, Any] | None:
+    """check_balance Job — 잔고 조회.
 
     payload:
-      - chat_id (str, optional): 텔레그램 응답용
-      - market (str, optional): 특정 코인 잔고 확인 (매매용)
-      - side (str, optional): BUY/SELL
-      - price (float, optional): 주문 가격
-      - sell_pct (int, optional): 매도 비율
+      - chat_id (str, optional): 텔레그램 응답용 (직접 응답)
+      - market (str, optional): 특정 코인 잔고 확인
+
+    Returns:
+        response_channel이 설정된 경우 잔고 dict 반환 (ct-advisor용).
+        chat_id가 있으면 텔레그램 직접 응답 후 None 반환.
     """
     chat_id = payload.get("chat_id")
 
     accounts = await asyncio.to_thread(_fetch_sync, settings)
     if not accounts:
         logger.warning("check_balance: 잔고 조회 결과 없음")
-        return
+        return {"accounts": [], "error": "empty"}
 
-    # 텔레그램 잔고 조회 응답
+    # 텔레그램 잔고 조회 응답 (직접)
     if chat_id:
         lines = ["💰 *잔고 현황*\n"]
         for acc in accounts:
@@ -54,25 +57,35 @@ async def handle_check_balance(payload: dict, settings: Settings) -> None:
             "text": "\n".join(lines),
             "parse_mode": "Markdown",
         })
-        return
+        return None
 
-    # 매매용 잔고 확인 → TODO: place_order 체이닝
-    market = payload.get("market")
-    side = payload.get("side")
-    if market and side:
-        logger.info(
-            "check_balance: %s %s — 잔고 확인 완료, 주문 핸들러 미구현",
-            market, side,
-        )
+    # ct-advisor용 — 잔고 데이터 반환
+    result: dict[str, Any] = {"accounts": []}
+    for acc in accounts:
+        currency = acc.get("currency", "?")
+        balance = float(acc.get("balance", 0))
+        locked = float(acc.get("locked", 0))
+        if balance > 0 or locked > 0:
+            result["accounts"].append({
+                "currency": currency,
+                "balance": balance,
+                "locked": locked,
+            })
+
+    logger.info("check_balance: %d개 자산 조회", len(result["accounts"]))
+    return result
 
 
 async def handle_get_balance(payload: dict, settings: Settings) -> None:
-    """get_balance Job — 특정 통화 잔고 조회."""
+    """get_balance Job — 특정 통화 잔고 조회 (텔레그램 응답 전용)."""
     currency = payload.get("currency", "KRW")
     chat_id = payload.get("chat_id")
 
     accounts = await asyncio.to_thread(_fetch_sync, settings)
-    acc = next((a for a in accounts if a.get("currency", "").upper() == currency.upper()), None)
+    acc = next(
+        (a for a in accounts if a.get("currency", "").upper() == currency.upper()),
+        None,
+    )
 
     if chat_id:
         if acc:

@@ -5,10 +5,13 @@ from __future__ import annotations
 import asyncio
 import logging
 
+import json
+
 from handlers.account import handle_check_balance, handle_get_balance
 from handlers.candle import handle_collect_candles
 from handlers.market import handle_get_markets, handle_get_ticker
 from infra.api.user import get_user_full
+from infra.redis_client import get_redis
 from infra.redis_queue import poll_delayed_jobs, pop_trade_job, push_trade_job
 from infra.redis_rate_limit import wait_for_rate_limit
 from utils.config import Settings
@@ -37,11 +40,14 @@ async def trade_worker(settings: Settings, shutdown: asyncio.Event, name: str) -
             await wait_for_rate_limit(user_id)
 
             payload = job_data.get("payload", {})
+            response_channel = job_data.get("response_channel")
+            request_id = job_data.get("request_id")
+            result = None
 
             if job_type == "collect_candles":
                 await handle_collect_candles(payload, user_settings)
             elif job_type == "check_balance":
-                await handle_check_balance(payload, user_settings)
+                result = await handle_check_balance(payload, user_settings)
             elif job_type == "get_balance":
                 await handle_get_balance(payload, user_settings)
             elif job_type == "get_markets":
@@ -51,6 +57,15 @@ async def trade_worker(settings: Settings, shutdown: asyncio.Event, name: str) -
             else:
                 # TODO: place_order, check_order, cancel_order
                 log.warning("Job 핸들러 미구현: %s", job_type)
+
+            # 응답 채널이 지정된 경우 결과 발행
+            if response_channel and result is not None:
+                r = get_redis()
+                await r.publish(response_channel, json.dumps({
+                    "request_id": request_id,
+                    "type": job_type,
+                    "result": result,
+                }, ensure_ascii=False))
 
         except Exception:
             log.exception("Job 처리 실패: %s", job_data)

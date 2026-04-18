@@ -102,13 +102,25 @@ async def _handle_signal_alert(
     sell_choices = data.get("sell_choices")
     buy_alloc_pct = data.get("buy_allocation_pct")
 
+    buy_amount_krw = data.get("buy_amount_krw")
+    krw_balance = data.get("krw_balance")
+    coin_balance = data.get("coin_balance")
+
     if signal_type == "BUY" and buy_alloc_pct:
-        alert_text += f"\n\n📊 *매수 추천:* 잔고의 `{buy_alloc_pct}%`"
+        amount_text = f"\n\n📊 *매수 추천:* 잔고의 `{buy_alloc_pct}%`"
+        if buy_amount_krw:
+            amount_text += f" (`{buy_amount_krw:,.0f}원`)"
+        if krw_balance:
+            amount_text += f"\n💰 KRW 잔고: `{krw_balance:,.0f}원`"
+        alert_text += amount_text
 
     if signal_type == "SELL" and sell_rec_pct:
-        alert_text += f"\n\n📊 *매도 추천:* `{sell_rec_pct}%`"
+        sell_text = f"\n\n📊 *매도 추천:* `{sell_rec_pct}%`"
         if sell_rec_pct < 100:
-            alert_text += " (부분 매도 -> 재진입 가능)"
+            sell_text += " (부분 매도 -> 재진입 가능)"
+        if coin_balance:
+            sell_text += f"\n💰 보유량: `{coin_balance:.8f}`"
+        alert_text += sell_text
 
     buttons = None
     if signal_type in ("BUY", "SELL") and market:
