@@ -2,6 +2,6 @@
 FROM autocoin-base:latest
 
 COPY shared/ ./
-COPY ct-worker/src/entrypoints/ ./entrypoints/
+COPY ct-worker/src/ ./
 
 CMD ["python", "-m", "entrypoints.worker"]

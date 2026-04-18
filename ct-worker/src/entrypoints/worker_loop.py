@@ -13,8 +13,8 @@ from infra.redis_rate_limit import wait_for_rate_limit
 from job_runner.handlers.trade import _cancel_order_sync
 from job_runner.handlers.trade_confirm import confirm_trade
 from job_runner.handlers.trade_redis import execute_trade
-from services.user_service import get_user_settings_from_dict
 from utils.config import Settings
+from utils.user_utils import get_user_settings_from_dict
 
 logger = logging.getLogger(__name__)
 

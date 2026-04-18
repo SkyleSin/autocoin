@@ -62,24 +62,31 @@ async def publish_photo(
 
 async def publish_signal_alert(
     chat_id: str,
-    text: str,
-    *,
-    photo_bytes: bytes | None = None,
-    reply_markup: dict[str, Any] | None = None,
-    parse_mode: str = "Markdown",
+    market: str,
+    signal_type: str,
+    close_price: float,
+    confidence: float,
+    reasons: list[str],
+    indicators: dict | None,
+    action: str,
+    force_full_sell: bool,
+    chart_bytes: bytes | None = None,
 ) -> None:
-    """복합 시그널 알림(텍스트+이미지+버튼)을 Redis 채널로 발행."""
+    """시그널 원시 데이터를 Redis 채널로 발행 (포맷은 ct-telegram 담당)."""
     if not chat_id:
         return
     msg: dict[str, Any] = {
         "type": "signal_alert",
         "chat_id": chat_id,
-        "text": text,
-        "parse_mode": parse_mode,
+        "market": market,
+        "signal_type": signal_type,
+        "close_price": close_price,
+        "confidence": confidence,
+        "reasons": reasons,
+        "indicators": indicators,
+        "action": action,
+        "force_full_sell": force_full_sell,
+        "chart_b64": base64.b64encode(chart_bytes).decode() if chart_bytes else None,
     }
-    if photo_bytes:
-        msg["photo_b64"] = base64.b64encode(photo_bytes).decode()
-    if reply_markup:
-        msg["reply_markup"] = reply_markup
     r = get_redis()
     await r.publish(CHANNEL, json.dumps(msg, ensure_ascii=False))

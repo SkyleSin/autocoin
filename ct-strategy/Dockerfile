@@ -2,6 +2,6 @@
 FROM autocoin-base:latest
 
 COPY shared/ ./
-COPY ct-strategy/src/entrypoints/ ./entrypoints/
+COPY ct-strategy/src/ ./
 
 CMD ["python", "-m", "entrypoints.strategy"]

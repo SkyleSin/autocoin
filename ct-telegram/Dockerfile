@@ -2,7 +2,6 @@
 FROM autocoin-base:latest
 
 COPY shared/ ./
-COPY ct-telegram/src/telegram/ ./telegram/
-COPY ct-telegram/src/entrypoints/ ./entrypoints/
+COPY ct-telegram/src/ ./
 
 CMD ["python", "-m", "entrypoints.telegram"]

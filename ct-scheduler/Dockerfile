@@ -2,6 +2,6 @@
 FROM autocoin-base:latest
 
 COPY shared/ ./
-COPY ct-scheduler/src/entrypoints/ ./entrypoints/
+COPY ct-scheduler/src/ ./
 
 CMD ["python", "-m", "entrypoints.scheduler"]
