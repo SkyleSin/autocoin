@@ -4,7 +4,7 @@
   2단계: 1H 신뢰도 부스트
   3단계: 15m 타이밍 트리거 (yes/no 게이트)
 
-confidence = (4H_score / MAX_4H) × 1H_multiplier
+confidence = avg_accuracy(충족 지표) × 1H_multiplier
 """
 
 from __future__ import annotations

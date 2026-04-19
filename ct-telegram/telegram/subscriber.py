@@ -138,6 +138,7 @@ async def _handle_signal_alert(
             market, signal_type, close_price,
             sell_recommended_pct=sell_rec_pct,
             sell_choices=sell_choices,
+            buy_amount_krw=buy_amount_krw,
         )
 
     chart_bytes = base64.b64decode(chart_b64) if chart_b64 else None

@@ -90,27 +90,40 @@ async def decide_topdown(
     direction: str, score_4h: float, multiplier: float,
     reasons: list[str], layers: dict[str, Any],
 ) -> StrategyResult:
-    """4H 점수 × 1H multiplier → 최종 confidence 산출."""
+    """충족 지표 가중평균 적중률 × 1H multiplier → 최종 confidence 산출.
+
+    score = (accuracy - 50) / 10 이므로,
+    avg_accuracy = (sum_score / hit_count) * 10 + 50
+    """
     from .base import StrategyResult
 
-    max_4h = MAX_BUY_4H if direction == "BUY" else MAX_SELL_4H
-    conf = min(score_4h / max_4h, 1.0) * multiplier if max_4h > 0 else 0.0
+    layer_4h = layers.get("layer_4h", {})
+    hits_key = "buy_hits" if direction == "BUY" else "sell_hits"
+    hit_count = len(layer_4h.get(hits_key, []))
+
+    if hit_count > 0:
+        avg_score = score_4h / hit_count
+        avg_accuracy = avg_score * 10 + 50  # 원래 적중률(%) 복원
+        conf = (avg_accuracy / 100) * multiplier
+    else:
+        conf = 0.0
     conf = min(conf, 1.0)
 
     reasons.append(
-        f"{direction} 4H={score_4h:.2f} xmult={multiplier:.2f} conf={conf:.2%}"
+        f"{direction} 4H={score_4h:.2f} hits={hit_count} xmult={multiplier:.2f} conf={conf:.2%}"
     )
     layers["scoring"] = {
         "direction": direction,
         "score_4h": round(score_4h, 2),
+        "hit_count": hit_count,
         "multiplier": round(multiplier, 2),
         "confidence": round(conf, 4),
     }
     meta: dict[str, Any] = {"status": "ok", "indicators": layers}
 
     logger.info(
-        "topdown_mtf: %s (4h=%.2f mult=%.2f conf=%.2f)",
-        direction, score_4h, multiplier, conf,
+        "topdown_mtf: %s (4h=%.2f hits=%d mult=%.2f conf=%.2f)",
+        direction, score_4h, hit_count, multiplier, conf,
     )
     return StrategyResult(direction, round(conf, 4), reasons, meta)
 

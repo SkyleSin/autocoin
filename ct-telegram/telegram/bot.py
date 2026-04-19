@@ -132,13 +132,15 @@ def make_signal_buttons(
     *,
     sell_recommended_pct: int = 0,
     sell_choices: list[int] | None = None,
+    buy_amount_krw: float | None = None,
 ) -> dict[str, Any]:
     """시그널 알림용 인라인 버튼 생성."""
     if signal_type == "BUY":
+        amount = int(buy_amount_krw) if buy_amount_krw else 0
         return {
             "inline_keyboard": [[
                 {"text": "매수 실행",
-                 "callback_data": f"trade_execute:{market}:BUY:{close_price}"},
+                 "callback_data": f"trade_execute:{market}:BUY:{amount}"},
                 {"text": "패스",
                  "callback_data": f"trade_pass:{market}"},
             ]],

@@ -152,7 +152,7 @@ async def _handle_signal(data: dict[str, Any], settings: Settings) -> None:
             return
 
         logger.info(
-            "advisor: %s BUY %.1f%% = %.0f원 (가용: %.0f원)",
+            "advisor: %s BUY %.1f%% = %d원 (가용: %d원)",
             market, buy_rec.allocation_pct, amount_krw, available_krw,
         )
 
