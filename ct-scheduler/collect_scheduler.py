@@ -16,6 +16,7 @@ from infra.api.candle import get_candles
 from infra.api.indicator_snapshot import upsert_indicator_snapshot
 from infra.api.job import cleanup_jobs
 from infra.api.report import generate_report
+from infra.api.signal import cleanup_hold_signals
 from infra.api.tracked_asset import get_active_markets
 from infra.api.user import get_active_users
 from infra.redis_pubsub import publish_analysis_ready
@@ -264,6 +265,12 @@ async def collect_scheduler(settings: Settings) -> None:
                     logger.info("collect/daily: job cleanup 완료")
                 except Exception:
                     logger.exception("collect/daily: job cleanup 실패")
+                # HOLD 시그널 7일 정리
+                try:
+                    await cleanup_hold_signals(days=7)
+                    logger.info("collect/daily: HOLD 시그널 정리 완료")
+                except Exception:
+                    logger.exception("collect/daily: HOLD 시그널 정리 실패")
                 # 마켓 목록 동기화
                 try:
                     await push_trade_job({"type": "sync_markets", "payload": {}})

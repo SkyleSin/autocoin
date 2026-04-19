@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.signal import Signal
@@ -91,3 +91,22 @@ async def close_opposite(
     )
     await db.commit()
     return {"closed": result.rowcount}
+
+
+@router.delete("/cleanup-hold")
+async def cleanup_hold(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    days: int = Query(7, ge=1, le=30),
+) -> dict[str, int]:
+    """오래된 HOLD 시그널 삭제."""
+    from datetime import timedelta
+
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    result = await db.execute(
+        delete(Signal).where(
+            Signal.signal_type == "HOLD",
+            Signal.created_at < cutoff,
+        )
+    )
+    await db.commit()
+    return {"deleted": result.rowcount}

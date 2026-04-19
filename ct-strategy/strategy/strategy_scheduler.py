@@ -45,9 +45,10 @@ async def strategy_scheduler(settings: Settings) -> None:
 
             try:
                 data = json.loads(msg["data"])
-                event = StrategyEvent(
-                    market=data["market"], timeframe=data["timeframe"],
-                )
+                tf = data.get("timeframe", "15m")
+                if tf != "15m":
+                    continue
+                event = StrategyEvent(market=data["market"], timeframe=tf)
                 await _handle_event(event, settings)
             except Exception:
                 logger.exception("strategy_scheduler: 이벤트 처리 실패 %s", msg.get("data"))
@@ -65,7 +66,7 @@ async def _handle_event(event: StrategyEvent, settings: Settings) -> None:
     users = await get_active_users()
     for user_data in users:
         watchlist = user_data.get("coin_watchlist")
-        if watchlist and event.market not in watchlist:
+        if not watchlist or event.market not in watchlist:
             continue
         try:
             await _evaluate_for_user(event, settings, user_data)
