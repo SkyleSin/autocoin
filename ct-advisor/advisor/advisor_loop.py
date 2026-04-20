@@ -10,15 +10,16 @@ import json
 import logging
 from typing import Any
 
-from advisor.position_sizing import (
-    calculate_buy_allocation,
-    calculate_sell_recommendation,
-)
 from infra.api.portfolio import get_user_portfolio
 from infra.api.user import get_active_users
 from infra.redis_client import get_redis
 from infra.redis_pubsub import publish_to_telegram
 from utils.config import Settings
+
+from advisor.position_sizing import (
+    calculate_buy_allocation,
+    calculate_sell_recommendation,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -90,9 +91,9 @@ async def _handle_signal(data: dict[str, Any], settings: Settings) -> None:
             user_risk = user.get("risk_settings") or {}
             risk.update(user_risk)
 
-    # 리스크 체크 — 일일 매매 횟수
+    # 리스크 체크 — 일일 매매 횟수 (유저별)
     from infra.api.trade import get_daily_trade_count
-    daily_count = await get_daily_trade_count()
+    daily_count = await get_daily_trade_count(user_id=user_id)
     max_daily = int(risk.get("max_daily_trades", 30))
     if daily_count >= max_daily:
         data["type"] = "text"

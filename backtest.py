@@ -293,6 +293,21 @@ def chk_macd_hist_falling(s, c, sr):
     )
 
 
+def chk_macd_hist_negative(s, c, sr):
+    """MACD 히스토그램 음수 지속 (현재 + 이전 봉 모두 음수)."""
+    return (
+        s.macd_histogram is not None
+        and s.macd_histogram_prev is not None
+        and s.macd_histogram < 0
+        and s.macd_histogram_prev < 0
+    )
+
+
+def chk_rsi_lt40_sell(s, c, sr):
+    """RSI < 40 — 하락 모멘텀 지속."""
+    return s.rsi_14 is not None and s.rsi_14 < 40
+
+
 def chk_bb_squeeze(s, c, sr):
     if s.bb_upper and s.bb_middle and s.bb_lower and s.bb_middle != 0:
         return (s.bb_upper - s.bb_lower) / s.bb_middle < 0.02
@@ -372,6 +387,8 @@ SELL_4H = [
     ("macd_hist_감소", 0.49, chk_macd_hist_falling),
     ("price<sma20", 0.30, chk_price_below_sma20),
     ("price<sma50", 0.28, chk_price_below_sma50),
+    ("macd_hist_음수지속", 0.50, chk_macd_hist_negative),   # 신규 후보
+    ("rsi<40", 0.50, chk_rsi_lt40_sell),                   # 신규 후보
 ]
 BUY_1H = [
     ("sr_저항돌파", 0.48, chk_sr_resistance_break),

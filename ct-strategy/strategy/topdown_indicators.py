@@ -66,3 +66,18 @@ def chk_macd_hist_falling(
 ) -> bool:
     h, hp = snap.macd_histogram, snap.macd_histogram_prev
     return h is not None and hp is not None and h < hp
+
+
+def chk_macd_hist_negative(
+    snap: IndicatorSnap, _close: float, _sr: SRAnalysis | None,
+) -> bool:
+    """MACD 히스토그램 음수 지속 (현재 + 이전 봉 모두 음수)."""
+    h, hp = snap.macd_histogram, snap.macd_histogram_prev
+    return h is not None and hp is not None and h < 0 and hp < 0
+
+
+def chk_rsi_lt40_sell(
+    snap: IndicatorSnap, _close: float, _sr: SRAnalysis | None,
+) -> bool:
+    """RSI < 40 — 하락 모멘텀 지속."""
+    return snap.rsi_14 is not None and snap.rsi_14 < 40

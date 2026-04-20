@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-import logging
-
 import json
+import logging
 
 from handlers.account import handle_check_balance, handle_get_balance
 from handlers.candle import handle_collect_candles
@@ -43,6 +42,8 @@ async def trade_worker(settings: Settings, shutdown: asyncio.Event, name: str) -
             await wait_for_rate_limit(user_id)
 
             payload = job_data.get("payload", {})
+            if user_id != "master":
+                payload.setdefault("user_id", user_id)
             response_channel = job_data.get("response_channel")
             request_id = job_data.get("request_id")
             result = None

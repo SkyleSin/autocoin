@@ -13,6 +13,9 @@ async def get_trades(limit: int = 10) -> list[dict]:
     return await api_get("/api/trades", params={"limit": limit})
 
 
-async def get_daily_trade_count() -> int:
-    r = await api_get("/api/trades/daily-count")
+async def get_daily_trade_count(user_id: int | None = None) -> int:
+    params = {}
+    if user_id is not None:
+        params["user_id"] = user_id
+    r = await api_get("/api/trades/daily-count", params=params)
     return r["count"]

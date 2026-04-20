@@ -25,8 +25,10 @@ from .topdown_tables import (
     BUY_4H,
     SELL_1H,
     SELL_4H,
-    TRIGGER_BUY_15M,
-    TRIGGER_SELL_15M,
+    TRIGGER_BUY_15M_OPTIONAL,
+    TRIGGER_BUY_15M_REQUIRED,
+    TRIGGER_SELL_15M_OPTIONAL,
+    TRIGGER_SELL_15M_REQUIRED,
 )
 
 if TYPE_CHECKING:
@@ -50,11 +52,11 @@ class StrategyTopdownMTF(BaseStrategy):
         r4h = await eval_single_tf(market, "4h", BUY_4H, SELL_4H)
         if r4h is None:
             return _make_hold("4H 데이터 없음", layers)
-        buy_4h, sell_4h, reasons_4h, detail_4h, extra_4h = r4h
+        buy_4h, sell_4h, reasons_4h, detail_4h, extra_4h, snap_4h = r4h
         layers["layer_4h"] = {**detail_4h, **extra_4h}
         all_reasons.extend(f"[4H] {r}" for r in reasons_4h)
 
-        direction = gate_4h(buy_4h, sell_4h)
+        direction = gate_4h(buy_4h, sell_4h, snap_4h=snap_4h)
         if direction == "HOLD":
             all_reasons.append(f"4H 방향 미결정 (BUY={buy_4h:.2f} SELL={sell_4h:.2f})")
             return _make_hold("4H 방향 미결정", layers, all_reasons)
@@ -74,9 +76,14 @@ class StrategyTopdownMTF(BaseStrategy):
             multiplier = 1.0
             all_reasons.append("[1H] 데이터 없음 -> multiplier=1.0")
 
-        # 3단계: 15m 타이밍 트리거
-        trigger_fns = TRIGGER_BUY_15M if direction == "BUY" else TRIGGER_SELL_15M
-        r15m = await eval_trigger_15m(market, trigger_fns)
+        # 3단계: 15m 타이밍 트리거 (required + optional)
+        if direction == "BUY":
+            req_fns, opt_fns = TRIGGER_BUY_15M_REQUIRED, TRIGGER_BUY_15M_OPTIONAL
+        else:
+            req_fns, opt_fns = TRIGGER_SELL_15M_REQUIRED, TRIGGER_SELL_15M_OPTIONAL
+        r15m = await eval_trigger_15m(
+            market, required_fns=req_fns, optional_fns=opt_fns,
+        )
         if r15m is None:
             return _make_hold("15m 데이터 없음", layers, all_reasons)
 

@@ -8,18 +8,19 @@ from typing import TYPE_CHECKING, Any
 from infra.api.indicator_snapshot import get_latest_snapshot
 
 from .snapshot_helpers import rebuild_snap, rebuild_sr
-from .topdown_layer import evaluate_layer, trigger_check
-from .topdown_tables import MAX_BUY_1H, MAX_BUY_4H, MAX_SELL_1H, MAX_SELL_4H
+from .topdown_layer import evaluate_layer, trigger_check, trigger_check_v2
+from .topdown_tables import MAX_BUY_1H, MAX_SELL_1H
+from .types import Snap as IndicatorSnap
 
 if TYPE_CHECKING:
     from .base import StrategyResult
 
 logger = logging.getLogger(__name__)
 
-# ── 4H 방향 게이트 파라미터 (2026-04-19 백테스트 비례 조정) ──
-_GAP_4H = 1.43
-_THRESHOLD_BUY = 7.14
-_THRESHOLD_SELL = 5.38
+# ── 4H 방향 게이트 파라미터 (2026-04-20 BTC+ETH 백테스트 비례 조정) ──
+_GAP_4H = 1.52
+_THRESHOLD_BUY = 7.57
+_THRESHOLD_SELL = 6.0
 
 # ── 1H 부스트 파라미터 ──
 _BOOST_WEIGHT = 0.4
@@ -30,7 +31,7 @@ _MULT_MAX = 1.5
 
 async def eval_single_tf(
     market: str, tf: str, buy_ind: list, sell_ind: list,
-) -> tuple[float, float, list[str], dict, dict] | None:
+) -> tuple[float, float, list[str], dict, dict, IndicatorSnap] | None:
     """단일 TF 평가. 데이터 없으면 None."""
     data = await get_latest_snapshot(market, tf)
     if not data:
@@ -46,11 +47,15 @@ async def eval_single_tf(
         "indicators": snap.to_dict(),
         "support_resistance": data.get("support_resistance"),
     }
-    return buy_s, sell_s, reasons, detail, extra
+    return buy_s, sell_s, reasons, detail, extra, snap
 
 
 async def eval_trigger_15m(
-    market: str, trigger_fns: list,
+    market: str,
+    trigger_fns: list | None = None,
+    *,
+    required_fns: list | None = None,
+    optional_fns: list | None = None,
 ) -> tuple[bool, list[str], dict] | None:
     """15m 타이밍 트리거 체크. 데이터 없으면 None."""
     data = await get_latest_snapshot(market, "15m")
@@ -60,7 +65,10 @@ async def eval_trigger_15m(
     if not snap:
         return None
     close = float(data.get("close_price", 0))
-    triggered, fired = trigger_check(snap, close, trigger_fns)
+    if required_fns is not None and optional_fns is not None:
+        triggered, fired = trigger_check_v2(snap, close, required_fns, optional_fns)
+    else:
+        triggered, fired = trigger_check(snap, close, trigger_fns or [])
     extra = {"close_price": close, "indicators": snap.to_dict()}
     return triggered, fired, extra
 
@@ -128,8 +136,33 @@ async def decide_topdown(
     return StrategyResult(direction, round(conf, 4), reasons, meta)
 
 
-def gate_4h(buy_4h: float, sell_4h: float, gap: float = _GAP_4H) -> str:
-    """4H 방향 게이트. Returns 'BUY' | 'SELL' | 'HOLD'."""
+def gate_4h(
+    buy_4h: float,
+    sell_4h: float,
+    snap_4h: IndicatorSnap | None = None,
+    gap: float = _GAP_4H,
+) -> str:
+    """4H 방향 게이트. Returns 'BUY' | 'SELL' | 'HOLD'.
+
+    MACD 히스토그램 하드필터:
+    - 강한 음수(< -50K) → BUY 차단
+    - 강한 양수(> +50K) → SELL 차단
+    """
+    _MACD_BLOCK = 50_000
+
+    if snap_4h and snap_4h.macd_histogram is not None:
+        macd_h = snap_4h.macd_histogram
+        if macd_h < -_MACD_BLOCK:
+            # 강한 하락 추세 — BUY 불허, SELL만 허용
+            if sell_4h - buy_4h >= gap and sell_4h >= _THRESHOLD_SELL:
+                return "SELL"
+            return "HOLD"
+        if macd_h > _MACD_BLOCK:
+            # 강한 상승 추세 — SELL 불허, BUY만 허용
+            if buy_4h - sell_4h >= gap and buy_4h >= _THRESHOLD_BUY:
+                return "BUY"
+            return "HOLD"
+
     if buy_4h - sell_4h >= gap and buy_4h >= _THRESHOLD_BUY:
         return "BUY"
     if sell_4h - buy_4h >= gap and sell_4h >= _THRESHOLD_SELL:

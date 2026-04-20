@@ -103,6 +103,7 @@ async def handle_place_order(payload: dict, settings: Settings) -> None:
             "side": side,
             "retry_count": 0,
             "chat_id": chat_id,
+            "user_id": payload.get("user_id"),
         }
         if defense_reason:
             check_payload["defense_reason"] = defense_reason
@@ -158,6 +159,9 @@ async def handle_check_order(payload: dict, settings: Settings) -> None:
             "exchange_order_id": order_uuid,
             "payload": data,
         }
+        trade_user_id = payload.get("user_id")
+        if trade_user_id:
+            trade_data["user_id"] = int(trade_user_id)
         if defense_reason:
             trade_data["notes"] = f"defense:{defense_reason}"
 

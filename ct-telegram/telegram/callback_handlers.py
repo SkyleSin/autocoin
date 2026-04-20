@@ -78,9 +78,13 @@ async def _handle_trade_execute(
         return
 
     user_id = await _resolve_user_id(chat_id)
+    if not user_id:
+        await send_message(token, chat_id, "⚠️ 유저 정보를 찾을 수 없습니다.")
+        return
+
     await push_trade_job({
         "type": "place_order",
-        "user_id": str(user_id) if user_id else "master",
+        "user_id": str(user_id),
         "payload": {
             "market": market,
             "side": "bid",
@@ -91,7 +95,7 @@ async def _handle_trade_execute(
     })
     await mark_alert_acted(market)
     await send_message(token, chat_id, f"✅ `{market}` 매수 {buy_amount:,.0f}원 주문 전달")
-    logger.info("trade_execute: %s BUY %d원", market, buy_amount)
+    logger.info("trade_execute: user=%d %s BUY %d원", user_id, market, buy_amount)
 
 
 async def _handle_trade_sell(

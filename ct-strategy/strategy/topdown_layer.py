@@ -50,9 +50,33 @@ def trigger_check(
     close_price: float,
     trigger_fns: list[Callable],
 ) -> tuple[bool, list[str]]:
-    """15m 타이밍 트리거 — 하나라도 충족하면 True."""
+    """15m 타이밍 트리거 — 하나라도 충족하면 True (하위 호환)."""
     fired: list[str] = []
     for fn in trigger_fns:
         if fn(snap, close_price, None):
             fired.append(fn.__name__.replace("chk_", ""))
     return len(fired) > 0, fired
+
+
+def trigger_check_v2(
+    snap: IndicatorSnap,
+    close_price: float,
+    required_fns: list[Callable],
+    optional_fns: list[Callable],
+) -> tuple[bool, list[str]]:
+    """15m 타이밍 트리거 — required 전부 + optional 하나 이상 충족해야 True."""
+    fired: list[str] = []
+
+    for fn in required_fns:
+        if fn(snap, close_price, None):
+            fired.append(fn.__name__.replace("chk_", ""))
+        else:
+            return False, fired  # 필수 미충족 → 즉시 실패
+
+    optional_fired = False
+    for fn in optional_fns:
+        if fn(snap, close_price, None):
+            fired.append(fn.__name__.replace("chk_", ""))
+            optional_fired = True
+
+    return optional_fired, fired

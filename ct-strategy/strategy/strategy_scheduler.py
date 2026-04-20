@@ -95,8 +95,27 @@ async def _evaluate_for_user(
         layer = layers.get(tf_key, {})
         if layer.get("close_price"):
             close_price = float(layer["close_price"])
-            combined_indicators = layer.get("indicators", {})
+            combined_indicators = dict(layer.get("indicators", {}))
             break
+
+    # SR 데이터 병합 (15m → 1h → 4h 우선순위로 탐색)
+    for tf_key in ("layer_15m", "layer_1h", "layer_4h"):
+        sr_data = layers.get(tf_key, {}).get("support_resistance")
+        if sr_data:
+            combined_indicators["support_resistance"] = sr_data
+            break
+
+    # 상위 TF 추세 정보 병합
+    layer_4h = layers.get("layer_4h", {})
+    if layer_4h.get("indicators"):
+        combined_indicators["higher_trend"] = {
+            "direction": layers.get("scoring", {}).get("direction", "-"),
+            "macd_histogram_4h": layer_4h["indicators"].get("macd_histogram"),
+        }
+
+    # scoring 정보 병합
+    if layers.get("scoring"):
+        combined_indicators["scoring"] = layers["scoring"]
 
     strategy_timeframe = event.timeframe
 

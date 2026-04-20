@@ -7,11 +7,10 @@ from decimal import Decimal
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query, status
+from models.trade import Trade
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from models.trade import Trade
 from utils.deps import get_db
 
 router = APIRouter(prefix="/api/trades", tags=["trades"])
@@ -58,15 +57,17 @@ async def list_trades(
 @router.get("/daily-count")
 async def daily_count(
     db: Annotated[AsyncSession, Depends(get_db)],
+    user_id: int | None = Query(None),
 ) -> dict[str, int]:
     today_start = datetime.combine(
         date.today(), datetime.min.time(), tzinfo=UTC,
     )
-    cnt = (await db.execute(
-        select(func.count()).select_from(Trade).where(
-            Trade.created_at >= today_start,
-        )
-    )).scalar() or 0
+    q = select(func.count()).select_from(Trade).where(
+        Trade.created_at >= today_start,
+    )
+    if user_id is not None:
+        q = q.where(Trade.user_id == user_id)
+    cnt = (await db.execute(q)).scalar() or 0
     return {"count": cnt}
 
 
