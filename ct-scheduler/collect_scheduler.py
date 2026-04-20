@@ -226,9 +226,10 @@ async def collect_scheduler(settings: Settings) -> None:
                 logger.exception("collect: 마켓 조회 실패")
                 markets = []
 
-            # TF 경계 확인 → 봉 수집 트리거
+            # TF 경계 확인 → 봉 수집 트리거 (1분 지연: 봉 마감 확정 대기)
+            delayed = tick_start - timedelta(minutes=1)
             for tf, period_min in TF_PERIODS.items():
-                bucket = _tf_bucket(tick_start, period_min)
+                bucket = _tf_bucket(delayed, period_min)
                 if last_bucket.get(tf) != bucket:
                     last_bucket[tf] = bucket
                     if markets:
