@@ -44,6 +44,16 @@ async def cleanup_hold_signals(days: int = 7) -> None:
     await api_delete("/api/signals/cleanup-hold", params={"days": days})
 
 
+async def get_recent_signals(limit: int = 20, types: str = "BUY,SELL") -> list[dict]:
+    """전체 마켓 최근 시그널."""
+    return await api_get("/api/signals/recent", params={"limit": limit, "types": types})
+
+
+async def get_signal_summary(hours: int = 24) -> dict:
+    """시그널 요약 통계."""
+    return await api_get("/api/signals/summary", params={"hours": hours})
+
+
 async def get_open_signals(
     market: str, types: str = "BUY,SELL",
 ) -> list[dict]:

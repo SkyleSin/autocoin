@@ -11,9 +11,6 @@ from contextlib import asynccontextmanager
 
 import uvicorn
 from fastapi import FastAPI
-from sqlalchemy import select, text
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-
 from models.active_alert import ActiveAlert
 from models.app_config import AppConfig
 from models.candle import Candle
@@ -37,13 +34,15 @@ from routers.markets import router as markets_router
 from routers.pattern_accuracy import router as pattern_accuracy_router
 from routers.pattern_configs import router as pattern_configs_router
 from routers.pattern_evaluations import router as pattern_evaluations_router
+from routers.portfolios import router as portfolios_router
 from routers.reports import router as reports_router
 from routers.shadow import router as shadow_router
 from routers.signals import router as signals_router
 from routers.tracked_assets import router as tracked_assets_router
-from routers.portfolios import router as portfolios_router
 from routers.trades import router as trades_router
 from routers.users import router as users_router
+from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from utils.config import Settings
 from utils.logging_setup import setup_logging
 
@@ -137,6 +136,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await conn.execute(text("""
                 ALTER TABLE active_alerts
                 ADD COLUMN IF NOT EXISTS user_id INT DEFAULT NULL
+            """))
+            # tracked_assets에 현재가 컬럼 추가
+            await conn.execute(text("""
+                ALTER TABLE tracked_assets
+                ADD COLUMN IF NOT EXISTS current_price NUMERIC(24,4) DEFAULT NULL,
+                ADD COLUMN IF NOT EXISTS price_updated_at TIMESTAMPTZ DEFAULT NULL
             """))
         # 유저 시드
         await _seed_users(session_factory, settings)

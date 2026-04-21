@@ -46,10 +46,13 @@ async def list_trades(
     db: Annotated[AsyncSession, Depends(get_db)],
     limit: int = Query(10, ge=1, le=200),
     order: str = Query("desc"),
+    user_id: int | None = Query(None),
 ) -> list[dict[str, Any]]:
     q = select(Trade).order_by(
         Trade.created_at.desc() if order == "desc" else Trade.created_at.asc(),
     ).limit(limit)
+    if user_id is not None:
+        q = q.where(Trade.user_id == user_id)
     rows = (await db.execute(q)).scalars().all()
     return [_to_dict(r) for r in rows]
 

@@ -3,17 +3,17 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import delete, select, update
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from models.signal import Signal
+from sqlalchemy import delete, func, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+from utils.deps import get_db
+
 from routers.signals_helpers import _to_dict
 from routers.signals_schemas import CloseOppositeBody, SignalCreate, SignalUpdate
-from utils.deps import get_db
 
 router = APIRouter(prefix="/api/signals", tags=["signals"])
 
@@ -41,6 +41,43 @@ async def latest(
         .order_by(Signal.created_at.desc()).limit(limit)
     )).scalars().all()
     return [_to_dict(r) for r in rows]
+
+
+@router.get("/recent")
+async def recent(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    limit: int = Query(20, ge=1, le=100),
+    types: str = Query("BUY,SELL"),
+) -> list[dict[str, Any]]:
+    """전체 마켓 최근 시그널 (BUY/SELL 기본)."""
+    type_list = [t.strip() for t in types.split(",")]
+    rows = (await db.execute(
+        select(Signal).where(Signal.signal_type.in_(type_list))
+        .order_by(Signal.created_at.desc()).limit(limit)
+    )).scalars().all()
+    return [_to_dict(r) for r in rows]
+
+
+@router.get("/summary")
+async def summary(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    hours: int = Query(24, ge=1, le=168),
+) -> dict[str, Any]:
+    """시그널 요약 통계."""
+    since = datetime.now(UTC) - timedelta(hours=hours)
+    rows = (await db.execute(
+        select(Signal.signal_type, func.count())
+        .where(Signal.created_at >= since)
+        .group_by(Signal.signal_type)
+    )).all()
+    counts = {r[0]: r[1] for r in rows}
+    return {
+        "hours": hours,
+        "total": sum(counts.values()),
+        "buy": counts.get("BUY", 0),
+        "sell": counts.get("SELL", 0),
+        "hold": counts.get("HOLD", 0),
+    }
 
 
 @router.get("/open")

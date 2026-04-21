@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
+from decimal import Decimal
 
-from sqlalchemy import Boolean, Index, String, Text
+from sqlalchemy import Boolean, DateTime, Index, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -29,3 +31,9 @@ class TrackedAsset(Base):
     )
     memo: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    current_price: Mapped[Decimal | None] = mapped_column(
+        Numeric(24, 4), nullable=True, comment="현재가 (KRW)",
+    )
+    price_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, comment="현재가 갱신 시각",
+    )

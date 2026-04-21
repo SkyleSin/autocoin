@@ -31,11 +31,12 @@ async def main() -> None:
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, shutdown.set)
 
-    from telegram.poller import telegram_poller
+    from telegram.poller import master_poller, telegram_poller
     from telegram.subscriber import send_message_subscriber
 
     tasks = [
         asyncio.create_task(telegram_poller(settings), name="tg-poller"),
+        asyncio.create_task(master_poller(settings), name="tg-master"),
         asyncio.create_task(send_message_subscriber(settings), name="tg-sub"),
     ]
 

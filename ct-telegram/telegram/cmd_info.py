@@ -6,19 +6,17 @@ import logging
 
 from infra.api.market import get_markets
 from infra.api.portfolio import get_user_portfolio
-from infra.api.report import generate_report
-from infra.api.signal import get_latest_signal
 from infra.api.tracked_asset import get_active_markets
 from infra.api.trade import get_trades
+
 from telegram.bot import send_message
-from utils.config import Settings
 
 logger = logging.getLogger(__name__)
 
 
-async def cmd_history(token: str, chat_id: str) -> None:
-    """최근 매매 이력."""
-    trades = await get_trades(limit=10)
+async def cmd_history(token: str, chat_id: str, user_id: int) -> None:
+    """유저 최근 매매 이력."""
+    trades = await get_trades(limit=10, user_id=user_id)
     if not trades:
         await send_message(token, chat_id, "📜 매매 이력이 없습니다.")
         return
@@ -35,35 +33,78 @@ async def cmd_history(token: str, chat_id: str) -> None:
     await send_message(token, chat_id, "\n".join(lines))
 
 
-async def cmd_status(token: str, chat_id: str, settings: Settings) -> None:
-    """시스템 상태 — 추적 자산 + 최신 시그널."""
-    assets = await get_active_markets()
-    if not assets:
-        await send_message(token, chat_id, "📊 추적 중인 자산이 없습니다.")
+async def cmd_report(token: str, chat_id: str, user_id: int) -> None:
+    """유저 손익 리포트 — 총 손익 + 코인별 손익 + 최근 거래."""
+    portfolio = await get_user_portfolio(user_id)
+    if not portfolio:
+        await send_message(token, chat_id, "📊 보유 자산이 없습니다.")
         return
 
-    lines = ["📊 *시스템 상태*\n"]
-    for a in assets:
-        market = a["market"]
-        sig = await get_latest_signal(market)
-        if sig:
-            sig_type = sig.get("signal_type", "?")
-            conf = sig.get("confidence", 0)
-            lines.append(f"`{market}` — {sig_type} ({conf:.0%})")
-        else:
-            lines.append(f"`{market}` — 시그널 없음")
+    # 현재가 맵 (tracked_assets)
+    assets = await get_active_markets()
+    price_map = {
+        a["market"].replace("KRW-", ""): a.get("current_price")
+        for a in assets
+    }
+
+    total_invested = 0.0
+    total_current = 0.0
+    coin_lines = []
+
+    for item in portfolio:
+        currency = item["currency"]
+        if currency == "KRW":
+            continue
+
+        balance = float(item["balance"])
+        avg_price = float(item.get("avg_buy_price", 0))
+        if balance <= 0 or avg_price <= 0:
+            continue
+
+        current_price = price_map.get(currency)
+        if not current_price:
+            continue
+
+        invested = avg_price * balance
+        current_val = current_price * balance
+        pnl = current_val - invested
+        pnl_pct = (pnl / invested * 100) if invested > 0 else 0
+
+        total_invested += invested
+        total_current += current_val
+
+        emoji = "🟢" if pnl >= 0 else "🔴"
+        coin_lines.append(
+            f"{emoji} `{currency}`: {pnl:+,.0f}원 ({pnl_pct:+.1f}%)"
+            f" | 평균가 {avg_price:,.0f}"
+        )
+
+    # 총 손익
+    total_pnl = total_current - total_invested
+    total_pnl_pct = (total_pnl / total_invested * 100) if total_invested > 0 else 0
+
+    lines = ["📊 *손익 리포트*\n"]
+    lines.append(f"💰 총 평가액: {total_current:,.0f}원")
+    pnl_emoji = "📈" if total_pnl >= 0 else "📉"
+    lines.append(f"{pnl_emoji} 총 손익: {total_pnl:+,.0f}원 ({total_pnl_pct:+.1f}%)\n")
+
+    if coin_lines:
+        lines.append("*코인별 손익:*")
+        lines.extend(coin_lines)
+
+    # 최근 거래 5건
+    trades = await get_trades(limit=5, user_id=user_id)
+    if trades:
+        lines.append("\n*최근 거래:*")
+        for t in trades:
+            side_emoji = "🟢" if t.get("side") == "buy" else "🔴"
+            created = t.get("created_at", "")[:16].replace("T", " ")
+            lines.append(
+                f"{side_emoji} `{t['market']}` {t['side']}"
+                f" p={t['price_krw']} [{t['status']}] {created}"
+            )
+
     await send_message(token, chat_id, "\n".join(lines))
-
-
-async def cmd_report(token: str, chat_id: str, settings: Settings) -> None:
-    """리포트 생성 + 전송."""
-    try:
-        result = await generate_report()
-        text = result.get("text") or result.get("report", "리포트 생성 완료")
-        await send_message(token, chat_id, text)
-    except Exception as e:
-        await send_message(token, chat_id, f"❌ 리포트 생성 실패: {e}")
-
 
 
 async def cmd_balance(token: str, chat_id: str, user_id: int) -> None:
@@ -97,7 +138,10 @@ async def cmd_markets(token: str, chat_id: str, keyword: str = "") -> None:
     """빗썸 KRW 마켓 목록."""
     markets = await get_markets(keyword)
     if not markets:
-        text = f"검색 결과 없음: `{keyword}`" if keyword else "마켓 목록이 비어있습니다.\n(서버 시작 후 동기화 대기 중)"
+        text = (
+            f"검색 결과 없음: `{keyword}`" if keyword
+            else "마켓 목록이 비어있습니다.\n(서버 시작 후 동기화 대기 중)"
+        )
         await send_message(token, chat_id, text)
         return
 

@@ -8,12 +8,14 @@ from typing import Any
 
 from infra.api.portfolio import get_user_portfolio
 from infra.api.signal import get_latest_signal
+from infra.api.tracked_asset import get_active_markets, update_market_prices
 from infra.api.user import get_active_users
 from infra.redis_client import get_redis
 from infra.redis_pubsub import publish_telegram
 from infra.redis_queue import push_trade_job
-from safety.llm.emergency_prompt import build_emergency_prompt
 from utils.config import Settings
+
+from safety.llm.emergency_prompt import build_emergency_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +31,24 @@ def _get_ticker_sync(settings: Settings, market: str) -> float:
     if data and isinstance(data, list):
         return float(data[0].get("trade_price", 0))
     return 0.0
+
+
+def _get_tickers_sync(settings: Settings, markets: list[str]) -> dict[str, float]:
+    """여러 마켓 현재가 일괄 조회."""
+    import httpx
+
+    if not markets:
+        return {}
+    url = f"{settings.bithumb_base_url}/v1/ticker"
+    params = {"markets": ",".join(markets)}
+    resp = httpx.get(url, params=params, timeout=15)
+    resp.raise_for_status()
+    data = resp.json()
+    return {
+        item["market"]: float(item.get("trade_price", 0))
+        for item in data
+        if isinstance(item, dict)
+    }
 
 
 async def _get_nearest_support(
@@ -220,6 +240,24 @@ async def _check_single_asset(
             )
 
 
+async def _update_tracked_prices(settings: Settings) -> None:
+    """활성 추적 종목의 현재가를 빗썸에서 조회하여 DB 갱신."""
+    try:
+        assets = await get_active_markets()
+        markets = [a["market"] for a in assets if a.get("market")]
+        if not markets:
+            return
+        prices = await asyncio.to_thread(_get_tickers_sync, settings, markets)
+        items = [
+            {"market": m, "price": p} for m, p in prices.items() if p > 0
+        ]
+        if items:
+            await update_market_prices(items)
+            logger.debug("현재가 갱��: %d종목", len(items))
+    except Exception:
+        logger.warning("현재가 갱신 실패", exc_info=True)
+
+
 async def safety_monitor(settings: Settings) -> None:
     """보유 코인 지지선 이탈 감시 루프 (1분 주기).
 
@@ -231,6 +269,9 @@ async def safety_monitor(settings: Settings) -> None:
     try:
         while True:
             try:
+                # 활성 종목 현재가 일괄 갱신
+                await _update_tracked_prices(settings)
+
                 users = await get_active_users()
                 for user in users:
                     user_id = user.get("id")

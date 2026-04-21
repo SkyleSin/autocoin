@@ -6,11 +6,12 @@ import logging
 from typing import Any
 
 from infra.api.user import get_user_by_telegram
+from utils.config import Settings
+
 from telegram.bot import send_message
 from telegram.callback_handlers import handle_callback
-from telegram.cmd_asset import cmd_add_asset, cmd_assets, cmd_remove_asset
-from telegram.cmd_info import cmd_balance, cmd_history, cmd_markets, cmd_report, cmd_status
-from utils.config import Settings
+from telegram.cmd_asset import cmd_add_asset, cmd_remove_asset, cmd_watchlist
+from telegram.cmd_info import cmd_balance, cmd_history, cmd_markets, cmd_report
 
 logger = logging.getLogger(__name__)
 
@@ -43,44 +44,43 @@ async def _route_command(
     user: dict,
 ) -> None:
     """명령어 라우팅."""
+    user_id = user["id"]
+
     if text.startswith("/start") or text.startswith("/help"):
         await _cmd_help(token, chat_id)
-    elif text.startswith("/a") and text.rstrip() in ("/a", "/assets"):
-        await cmd_assets(token, chat_id)
+    elif text.rstrip() in ("/w", "/watchlist"):
+        await cmd_watchlist(token, chat_id, user_id)
     elif text.startswith("/add "):
-        await cmd_add_asset(token, chat_id, text[5:].strip().upper())
+        await cmd_add_asset(token, chat_id, user_id, text[5:].strip().upper())
     elif text.startswith("/rm "):
-        await cmd_remove_asset(token, chat_id, text[4:].strip().upper())
+        await cmd_remove_asset(token, chat_id, user_id, text[4:].strip().upper())
     elif text.startswith("/remove "):
-        await cmd_remove_asset(token, chat_id, text[8:].strip().upper())
-    elif text.startswith("/h") and text.rstrip() in ("/h", "/history"):
-        await cmd_history(token, chat_id)
-    elif text.startswith("/s") and text.rstrip() in ("/s", "/status"):
-        await cmd_status(token, chat_id, settings)
-    elif text.startswith("/r") and text.rstrip() in ("/r", "/report"):
-        await cmd_report(token, chat_id, settings)
-    elif text.startswith("/b") and text.rstrip() in ("/b", "/balance"):
-        await cmd_balance(token, chat_id, user["id"])
-    elif text.startswith("/m") and text.rstrip() in ("/m", "/markets"):
+        await cmd_remove_asset(token, chat_id, user_id, text[8:].strip().upper())
+    elif text.rstrip() in ("/h", "/history"):
+        await cmd_history(token, chat_id, user_id)
+    elif text.rstrip() in ("/r", "/report"):
+        await cmd_report(token, chat_id, user_id)
+    elif text.rstrip() in ("/b", "/balance"):
+        await cmd_balance(token, chat_id, user_id)
+    elif text.rstrip() in ("/m", "/markets"):
         await cmd_markets(token, chat_id)
     elif text.startswith("/markets "):
         await cmd_markets(token, chat_id, text[9:].strip())
     else:
-        await send_message(token, chat_id, "알 수 없는 명령어입니다. /help 를 입력하세요.")
+        await send_message(token, chat_id, "�� 수 없는 명령어입니다. /help 를 입력하세요.")
 
 
 async def _cmd_help(token: str, chat_id: str) -> None:
     msg = """🤖 *autocoin 봇 명령어*
 
 *자산 관리:*
-/a — 추적 자산 목록
-/add KRW-BTC — 추적 자산 추가
-/rm KRW-BTC — 추적 자산 제거
+/w — 워치리스트
+/add KRW-BTC — 워치리스트 추가
+/rm KRW-BTC — 워치리스트 제거
 
 *조회:*
-/s — 시스템 상태
+/r — 손익 리포트
 /h — 매매 이력
-/r — 리포트
 /b — 보유 자산 현황
 /m — KRW 마켓 목록
 /markets BTC — 마켓 검색"""

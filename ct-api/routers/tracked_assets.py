@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from models.tracked_asset import TrackedAsset
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from models.tracked_asset import TrackedAsset
 from utils.deps import get_db
 
 router = APIRouter(prefix="/api/tracked-assets", tags=["tracked-assets"])
@@ -78,9 +78,39 @@ async def update(
     return _to_dict(row)
 
 
+class PriceItem(BaseModel):
+    market: str
+    price: float
+
+
+@router.put("/prices")
+async def update_prices(
+    items: list[PriceItem],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, int]:
+    """활성 종목 현재가 일괄 업데이��."""
+    now = datetime.now(UTC)
+    updated = 0
+    for item in items:
+        row = (await db.execute(
+            select(TrackedAsset).where(
+                TrackedAsset.market == item.market,
+                TrackedAsset.is_active.is_(True),
+            )
+        )).scalar_one_or_none()
+        if row:
+            row.current_price = item.price
+            row.price_updated_at = now
+            updated += 1
+    await db.commit()
+    return {"updated": updated}
+
+
 def _to_dict(r: TrackedAsset) -> dict[str, Any]:
     return {
         "id": str(r.id), "market": r.market, "intent": r.intent,
         "memo": r.memo, "is_active": r.is_active,
+        "current_price": float(r.current_price) if r.current_price else None,
+        "price_updated_at": r.price_updated_at.isoformat() if r.price_updated_at else None,
         "created_at": r.created_at.isoformat(), "updated_at": r.updated_at.isoformat(),
     }

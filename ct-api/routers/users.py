@@ -1,14 +1,14 @@
-"""User 조회 라우터 (읽기 전용, 민감정보 제외)."""
+"""User 라우터 — 조회 + watchlist 관리."""
 
 from __future__ import annotations
 
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
+from models.user import User
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from models.user import User
 from utils.deps import get_db
 
 router = APIRouter(prefix="/api/users", tags=["users"])
@@ -60,6 +60,36 @@ async def by_id_full(
             status_code=status.HTTP_404_NOT_FOUND, detail="not found",
         )
     return _to_dict_full(row)
+
+
+class WatchlistUpdate(BaseModel):
+    coin_watchlist: list[str]
+
+
+@router.get("/{user_id}/watchlist")
+async def get_watchlist(
+    user_id: Annotated[int, Path(...)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> list[str]:
+    row = await db.get(User, user_id)
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
+    return row.coin_watchlist or []
+
+
+@router.put("/{user_id}/watchlist")
+async def update_watchlist(
+    user_id: Annotated[int, Path(...)],
+    body: WatchlistUpdate,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> list[str]:
+    row = await db.get(User, user_id)
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
+    row.coin_watchlist = body.coin_watchlist
+    await db.commit()
+    await db.refresh(row)
+    return row.coin_watchlist
 
 
 def _to_dict(r: User) -> dict[str, Any]:
