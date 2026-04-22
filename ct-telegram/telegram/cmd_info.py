@@ -33,12 +33,11 @@ async def cmd_history(token: str, chat_id: str, user_id: int) -> None:
     await send_message(token, chat_id, "\n".join(lines))
 
 
-async def cmd_report(token: str, chat_id: str, user_id: int) -> None:
-    """유저 손익 리포트 — 총 손익 + 코인별 손익 + 최근 거래."""
+async def build_report_text(user_id: int) -> str | None:
+    """유저 손익 리포트 텍스트 생성. 데이터 없으면 None."""
     portfolio = await get_user_portfolio(user_id)
     if not portfolio:
-        await send_message(token, chat_id, "📊 보유 자산이 없습니다.")
-        return
+        return None
 
     # 현재가 맵 (tracked_assets)
     assets = await get_active_markets()
@@ -104,7 +103,16 @@ async def cmd_report(token: str, chat_id: str, user_id: int) -> None:
                 f" p={t['price_krw']} [{t['status']}] {created}"
             )
 
-    await send_message(token, chat_id, "\n".join(lines))
+    return "\n".join(lines)
+
+
+async def cmd_report(token: str, chat_id: str, user_id: int) -> None:
+    """유저 손익 리포트 — 총 손익 + 코인별 손익 + 최근 거래."""
+    text = await build_report_text(user_id)
+    if text is None:
+        await send_message(token, chat_id, "📊 보유 자산이 없습니다.")
+        return
+    await send_message(token, chat_id, text)
 
 
 async def cmd_balance(token: str, chat_id: str, user_id: int) -> None:

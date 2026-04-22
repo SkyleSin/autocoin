@@ -5,11 +5,11 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime, timedelta
 
+from models.signal import Signal
+from models.trade import Trade
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.signal import Signal
-from models.trade import Trade
 from services.accuracy_service import get_accuracy_summary, verify_pending_signals
 
 logger = logging.getLogger(__name__)
@@ -168,9 +168,8 @@ async def _section_topdown_indicators(session: AsyncSession) -> list[str]:
     lines.append(f"  Top3 BUY: {top3_buy}")
     lines.append(f"  Top3 SELL: {top3_sell}")
 
-    from sqlalchemy import func as sa_func
-
     from models.indicator_weight import IndicatorWeight
+    from sqlalchemy import func as sa_func
     db_count = (await session.execute(
         select(sa_func.count()).select_from(IndicatorWeight).where(
             IndicatorWeight.timeframe.in_(["4h", "1h", "15m"]),
@@ -747,3 +746,148 @@ async def generate_detail_report(session: AsyncSession) -> list[str]:
 
     summary = "\n".join(lines)
     return [summary] + card_messages
+
+
+# ──────────────────────────────────────────────
+# 시그널 요약 (N시간)
+# ──────────────────────────────────────────────
+
+
+def _fmt_macd(val: float) -> str:
+    """MACD 값을 K 접미사 포맷으로 변환."""
+    if abs(val) >= 1000:
+        return f"{val / 1000:+.0f}K"
+    return f"{val:+.0f}"
+
+
+def _fmt_change(sig_price: float, fut_price: float, signal_type: str) -> tuple[str, str]:
+    """4h후 변동률 + 결과 판정."""
+    chg = (fut_price - sig_price) / sig_price * 100
+    chg_str = f"{chg:+.1f}%"
+    if signal_type == "BUY":
+        mark = "✅" if chg > 0 else "❌"
+    else:
+        mark = "✅" if chg < 0 else "❌"
+    return chg_str, mark
+
+
+async def _query_buy_sell(session: AsyncSession, hours: int) -> list:
+    """BUY/SELL 시그널 + 4h후 가격 조회."""
+    return (await session.execute(text(f"""
+        SELECT
+            to_char(s.created_at AT TIME ZONE 'Asia/Seoul', 'HH24:MI') as kst,
+            REPLACE(s.market, 'KRW-', '') as coin,
+            s.signal_type,
+            s.confidence,
+            ROUND(COALESCE(
+                (s.indicators->>'rsi_14')::numeric,
+                (s.indicators->'layer_15m'->'indicators'->>'rsi_14')::numeric
+            ), 0) as rsi,
+            ROUND(COALESCE(
+                (s.indicators->>'macd_histogram')::numeric,
+                (s.indicators->'layer_15m'->'indicators'->>'macd_histogram')::numeric
+            ), 0) as macd_h,
+            sp.signal_price,
+            fp.future_price
+        FROM signals s
+        LEFT JOIN LATERAL (
+            SELECT c.close as signal_price FROM candles c
+            WHERE c.market = s.market AND c.timeframe = '15m'
+              AND c.open_at <= s.created_at
+            ORDER BY c.open_at DESC LIMIT 1
+        ) sp ON true
+        LEFT JOIN LATERAL (
+            SELECT c.close as future_price FROM candles c
+            WHERE c.market = s.market AND c.timeframe = '15m'
+              AND c.open_at >= s.created_at + interval '4 hours'
+            ORDER BY c.open_at ASC LIMIT 1
+        ) fp ON true
+        WHERE s.source IN ('technical', 'deepseek', 'local_llm')
+          AND s.signal_type IN ('BUY', 'SELL')
+          AND s.created_at >= now() - interval '{hours} hours'
+          AND fp.future_price IS NOT NULL
+        ORDER BY s.created_at
+    """))).fetchall()
+
+
+async def _query_hold_stats(session: AsyncSession, hours: int) -> tuple[int, int]:
+    """HOLD 통계 조회."""
+    row = (await session.execute(text(f"""
+        SELECT
+            count(*) as total,
+            count(*) FILTER (
+                WHERE abs((fp.fp - sp.sp) / sp.sp * 100) < 2.0
+            ) as stable
+        FROM signals s
+        LEFT JOIN LATERAL (
+            SELECT c.close as sp FROM candles c
+            WHERE c.market = s.market AND c.timeframe = '15m'
+              AND c.open_at <= s.created_at
+            ORDER BY c.open_at DESC LIMIT 1
+        ) sp ON true
+        LEFT JOIN LATERAL (
+            SELECT c.close as fp FROM candles c
+            WHERE c.market = s.market AND c.timeframe = '15m'
+              AND c.open_at >= s.created_at + interval '4 hours'
+            ORDER BY c.open_at ASC LIMIT 1
+        ) fp ON true
+        WHERE s.signal_type = 'HOLD'
+          AND s.created_at >= now() - interval '{hours} hours'
+          AND fp.fp IS NOT NULL AND sp.sp > 0
+    """))).fetchone()
+    if not row or row[0] == 0:
+        return 0, 0
+    return int(row[0]), int(row[1])
+
+
+def _build_summary_table(rows: list) -> tuple[str, int, int]:
+    """BUY/SELL 테이블 텍스트 + 적중/확정 카운트."""
+    header = "시간  코인 판단 신뢰  RSI MACD   4h후  결과"
+    lines = [header]
+    hit, confirmed = 0, 0
+
+    for row in rows:
+        kst, coin, sig_type, conf, rsi, macd_h, sig_price, fut_price = row
+        conf_str = f"{int(float(conf) * 100)}%" if conf else "N/A"
+        rsi_str = f"{int(rsi)}" if rsi is not None else " -"
+        macd_str = _fmt_macd(float(macd_h)) if macd_h is not None else "  -"
+
+        if fut_price and sig_price and float(sig_price) > 0:
+            chg_str, mark = _fmt_change(float(sig_price), float(fut_price), sig_type)
+            confirmed += 1
+            if mark == "✅":
+                hit += 1
+        else:
+            chg_str, mark = "  -  ", "⏳"
+
+        side = "BUY " if sig_type == "BUY" else "SELL"
+        lines.append(
+            f"{kst} {coin:<4} {side} {conf_str:>4}"
+            f"  {rsi_str:>3} {macd_str:>5}"
+            f"  {chg_str:>6}  {mark}"
+        )
+
+    return "\n".join(lines), hit, confirmed
+
+
+async def generate_signal_summary(session: AsyncSession, *, hours: int = 12) -> str:
+    """N시간 시그널 결과 요약 텍스트 생성."""
+    rows = await _query_buy_sell(session, hours)
+    hold_total, hold_stable = await _query_hold_stats(session, hours)
+
+    parts: list[str] = [f"📡 *{hours}시간 시그널 결과*\n"]
+
+    if rows:
+        table_text, hit, confirmed = _build_summary_table(rows)
+        parts.append(f"```\n{table_text}\n```")
+        if confirmed > 0:
+            rate = hit / confirmed * 100
+            parts.append(f"적중: {hit}/{confirmed} ({rate:.0f}%)")
+    else:
+        parts.append("BUY/SELL 시그널 없음")
+
+    if hold_total > 0:
+        pct = hold_stable / hold_total * 100
+        parts.append(f"⏸ HOLD {hold_total}건 — {hold_stable}건({pct:.0f}%) 2% 이내")
+
+    return "\n".join(parts)

@@ -7,19 +7,20 @@ import logging
 from datetime import UTC, datetime, timedelta, timezone
 
 import pandas as pd
-
 from analysis.indicators import compute_all
 from analysis.patterns import analyze as analyze_patterns
-from analysis.support_resistance import analyze as analyze_sr
 from analysis.signal_generator import evaluate as evaluate_signal
+from analysis.support_resistance import analyze as analyze_sr
 from infra.api.candle import get_candles
 from infra.api.indicator_snapshot import upsert_indicator_snapshot
 from infra.api.job import cleanup_jobs
-from infra.api.report import generate_report
+from infra.api.portfolio import get_user_portfolio
+from infra.api.report import generate_report, get_signal_summary
 from infra.api.signal import cleanup_hold_signals
 from infra.api.tracked_asset import get_active_markets
+from infra.api.trade import get_trades
 from infra.api.user import get_active_users
-from infra.redis_pubsub import publish_analysis_ready
+from infra.redis_pubsub import publish_analysis_ready, publish_master, publish_telegram
 from infra.redis_queue import push_trade_job
 from utils.config import Settings
 
@@ -53,6 +54,72 @@ def _next_kst_target(hour: int, minute: int) -> datetime:
     if now_kst >= target:
         target += timedelta(days=1)
     return target.astimezone(UTC)
+
+
+async def _build_user_report(
+    user_id: int, price_map: dict[str, float],
+) -> str | None:
+    """유저 손익 리포트 텍스트 생성 (cmd_report 로직 재현)."""
+    portfolio = await get_user_portfolio(user_id)
+    if not portfolio:
+        return None
+
+    total_invested = 0.0
+    total_current = 0.0
+    coin_lines = []
+
+    for item in portfolio:
+        currency = item["currency"]
+        if currency == "KRW":
+            continue
+        balance = float(item["balance"])
+        avg_price = float(item.get("avg_buy_price", 0))
+        if balance <= 0 or avg_price <= 0:
+            continue
+        current_price = price_map.get(currency)
+        if not current_price:
+            continue
+
+        invested = avg_price * balance
+        current_val = current_price * balance
+        pnl = current_val - invested
+        pnl_pct = (pnl / invested * 100) if invested > 0 else 0
+        total_invested += invested
+        total_current += current_val
+
+        emoji = "🟢" if pnl >= 0 else "🔴"
+        coin_lines.append(
+            f"{emoji} `{currency}`: {pnl:+,.0f}원 ({pnl_pct:+.1f}%)"
+            f" | 평균가 {avg_price:,.0f}"
+        )
+
+    total_pnl = total_current - total_invested
+    total_pnl_pct = (
+        (total_pnl / total_invested * 100) if total_invested > 0 else 0
+    )
+
+    lines = ["📊 *손익 리포트*\n"]
+    lines.append(f"💰 총 평가액: {total_current:,.0f}원")
+    pnl_emoji = "📈" if total_pnl >= 0 else "📉"
+    lines.append(
+        f"{pnl_emoji} 총 손익: {total_pnl:+,.0f}원 ({total_pnl_pct:+.1f}%)\n"
+    )
+    if coin_lines:
+        lines.append("*코인별 손익:*")
+        lines.extend(coin_lines)
+
+    trades = await get_trades(limit=5, user_id=user_id)
+    if trades:
+        lines.append("\n*최근 거래:*")
+        for t in trades:
+            side_emoji = "🟢" if t.get("side") == "buy" else "🔴"
+            created = t.get("created_at", "")[:16].replace("T", " ")
+            lines.append(
+                f"{side_emoji} `{t['market']}` {t['side']}"
+                f" p={t['price_krw']} [{t['status']}] {created}"
+            )
+
+    return "\n".join(lines)
 
 
 def _next_report_target() -> datetime:
@@ -193,6 +260,69 @@ async def _analyze_market(
 
 
 # ---------------------------------------------------------------------------
+# 정기 리포트 발송
+# ---------------------------------------------------------------------------
+
+
+async def _send_scheduled_reports(settings: Settings) -> None:
+    """9시/21시 정기 리포트 — master + 유저별 발송."""
+    # 12h 시그널 요약 (공통)
+    signal_text = ""
+    try:
+        resp = await get_signal_summary(hours=16)
+        signal_text = resp.get("text", "")
+    except Exception:
+        logger.exception("report: 시그널 요약 조회 실패")
+
+    # 1) master 봇 — 기존 generate_report + 시그널 요약
+    master_chat = settings.master_telegram_id
+    if master_chat:
+        try:
+            resp = await generate_report()
+            master_text = resp.get("text", "")
+            if signal_text:
+                master_text += f"\n\n{signal_text}"
+            await publish_master(master_chat, master_text)
+            logger.info("report: master 리포트 발송")
+        except Exception:
+            logger.exception("report: master 리포트 실패")
+
+    # 2) 유저별 — 손익 리포트 + 시그널 요약
+    try:
+        users = await get_active_users()
+    except Exception:
+        logger.exception("report: 유저 조회 실패")
+        return
+
+    # 현재가 맵 — 유저별 중복 호출 방지
+    try:
+        assets = await get_active_markets()
+        price_map = {
+            a["market"].replace("KRW-", ""): a.get("current_price")
+            for a in assets
+        }
+    except Exception:
+        logger.exception("report: 마켓 조회 실패")
+        price_map = {}
+
+    for user in users:
+        chat_id = str(user.get("telegram_id", ""))
+        user_id = user.get("id")
+        if not chat_id or not user_id:
+            continue
+        try:
+            user_text = await _build_user_report(user_id, price_map)
+            if not user_text:
+                user_text = "📊 보유 자산이 없습니다."
+            if signal_text:
+                user_text += f"\n\n{signal_text}"
+            await publish_telegram(chat_id, user_text)
+            logger.info("report: 유저 %s 리포트 발송", chat_id)
+        except Exception:
+            logger.exception("report: 유저 %s 리포트 실패", chat_id)
+
+
+# ---------------------------------------------------------------------------
 # 메인 루프
 # ---------------------------------------------------------------------------
 
@@ -280,13 +410,9 @@ async def collect_scheduler(settings: Settings) -> None:
                     logger.exception("collect/daily: 마켓 동기화 트리거 실패")
                 next_daily = _next_kst_target(0, 5)
 
-            # 리포트
+            # 리포트 발송
             if now >= next_report:
-                try:
-                    await generate_report()
-                    logger.info("collect/report: 리포트 생성 완료")
-                except Exception:
-                    logger.exception("collect/report: 리포트 생성 실패")
+                await _send_scheduled_reports(settings)
                 next_report = _next_report_target()
 
             # 다음 틱까지 대기 (10초 주기)

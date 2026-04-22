@@ -65,28 +65,27 @@ def calculate_buy_allocation(
     """매수 비율(%) 산출 — 실제 금액은 ct-worker가 잔고 기반으로 계산."""
     adjustments: list[str] = []
 
-    # 1) 패턴/스코어링 기반 가중치
+    # 1) scoring 기반 가중치 (1순위), 패턴은 후속 보정만
     pattern_name = "없음"
-    pattern_weight = 0.5
+    pattern_weight = 0.4  # 보수적 기본값
     scoring = None
+
+    if indicators:
+        scoring = indicators.get("scoring")
+    if scoring:
+        score_4h = scoring.get("score_4h", 0)
+        multiplier = scoring.get("multiplier", 1.0)
+        score_weight = min(score_4h / 6.0, 1.0)
+        pattern_weight = max(0.5, min(score_weight * multiplier, 1.0))
+        adjustments.append(
+            f"탑다운 4H={score_4h:.2f} mult={multiplier:.2f} → {pattern_weight:.0%}"
+        )
+    else:
+        adjustments.append(f"scoring 없음 → 기본 가중치 {pattern_weight:.0%}")
 
     if patterns:
         top = patterns[0]
-        name = top.get("name", "")
-        pattern_name = top.get("name_ko", name)
-        raw_pct = _FALLBACK_ALLOCATION.get(name, DEFAULT_ALLOCATION_PCT)
-        pattern_weight = max(0.3, min(raw_pct / 35.0, 1.0))
-        adjustments.append(f"패턴 {pattern_name} 가중치 {pattern_weight:.0%}")
-    elif indicators:
-        scoring = indicators.get("scoring")
-        if scoring:
-            score_4h = scoring.get("score_4h", 0)
-            multiplier = scoring.get("multiplier", 1.0)
-            score_weight = min(score_4h / 6.0, 1.0)
-            pattern_weight = max(0.5, min(score_weight * multiplier, 1.0))
-            adjustments.append(
-                f"탑다운 4H={score_4h:.2f} mult={multiplier:.2f} → {pattern_weight:.0%}"
-            )
+        pattern_name = top.get("name_ko", top.get("name", ""))
 
     base_pct = max_per_trade_pct * pattern_weight
 
@@ -124,7 +123,17 @@ def calculate_buy_allocation(
                 adjusted_pct *= 0.7
                 adjustments.append(f"볼린저 수축 ({bb_width:.1f}%) -30%")
 
-    # 5) 클램핑
+    # 5) 패턴 보정 (소폭 ±10%)
+    if patterns:
+        pat_conf = patterns[0].get("confidence", 0)
+        if pat_conf >= 0.7:
+            adjusted_pct *= 1.1
+            adjustments.append(f"패턴 {pattern_name} 고신뢰 +10%")
+        elif pat_conf < 0.5:
+            adjusted_pct *= 0.9
+            adjustments.append(f"패턴 {pattern_name} 저신뢰 -10%")
+
+    # 6) 클램핑
     if adjusted_pct > max_per_trade_pct:
         adjustments.append(f"상한 {adjusted_pct:.1f}% → {max_per_trade_pct}%")
         adjusted_pct = max_per_trade_pct
