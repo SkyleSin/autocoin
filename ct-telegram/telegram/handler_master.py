@@ -10,6 +10,7 @@ from utils.config import Settings
 from telegram.bot import send_message
 from telegram.cmd_master import (
     cmd_ind,
+    cmd_shadow,
     cmd_sig,
     cmd_sys,
     cmd_tracked,
@@ -49,6 +50,8 @@ async def _route(text: str, token: str, chat_id: str, settings: Settings) -> Non
         await cmd_tracked(token, chat_id)
     elif text.rstrip() in ("/users",):
         await cmd_users(token, chat_id)
+    elif text.rstrip() in ("/shadow",):
+        await cmd_shadow(token, chat_id)
     else:
         await send_message(token, chat_id, "알 수 없는 명령어. /help")
 
@@ -60,5 +63,6 @@ async def _cmd_help(token: str, chat_id: str) -> None:
 /sig — 시그널 요약 + 최근 20건
 /ind — 지표별 적중률 + 현재 스냅샷
 /tracked — 추적 자산 + 현재가
-/users — 유저 목록"""
+/users — 유저 목록
+/shadow — shadow 유저 성과"""
     await send_message(token, chat_id, msg)

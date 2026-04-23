@@ -36,3 +36,7 @@ class User(Base):
     )
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_shadow: Mapped[bool] = mapped_column(
+        Boolean, default=False,
+        comment="가상 유저 (동일 전략, 자동 체결, 빗썸 API 미호출)",
+    )

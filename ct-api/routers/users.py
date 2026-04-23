@@ -101,6 +101,7 @@ def _to_dict(r: User) -> dict[str, Any]:
         "coin_watchlist": r.coin_watchlist,
         "risk_settings": r.risk_settings,
         "is_active": r.is_active,
+        "is_shadow": r.is_shadow,
         "created_at": r.created_at.isoformat(),
     }
 

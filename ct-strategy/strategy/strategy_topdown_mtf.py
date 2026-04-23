@@ -67,7 +67,7 @@ class StrategyTopdownMTF(BaseStrategy):
         # 2단계: 1H 신뢰도 부스트
         r1h = await eval_single_tf(market, "1h", BUY_1H, SELL_1H)
         if r1h is not None:
-            buy_1h, sell_1h, reasons_1h, detail_1h, extra_1h = r1h
+            buy_1h, sell_1h, reasons_1h, detail_1h, extra_1h, _ = r1h
             layers["layer_1h"] = {**detail_1h, **extra_1h}
             all_reasons.extend(f"[1H] {r}" for r in reasons_1h)
             multiplier, mult_reason = calc_1h_multiplier(direction, buy_1h, sell_1h)

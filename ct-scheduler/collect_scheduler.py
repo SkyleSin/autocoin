@@ -158,6 +158,8 @@ async def _trigger_portfolio_sync() -> None:
         user_id = user.get("id")
         if user_id is None:
             continue
+        if user.get("is_shadow"):
+            continue
         await push_trade_job({
             "type": "sync_portfolio",
             "user_id": str(user_id),

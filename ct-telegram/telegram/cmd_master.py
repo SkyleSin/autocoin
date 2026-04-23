@@ -5,8 +5,10 @@ from __future__ import annotations
 import logging
 
 from infra.api.indicator_snapshot import get_latest_snapshot
+from infra.api.portfolio import get_user_portfolio
 from infra.api.signal import get_recent_signals, get_signal_summary
 from infra.api.tracked_asset import get_active_markets
+from infra.api.trade import get_trades
 from infra.api.user import get_active_users
 
 from telegram.bot import send_message
@@ -191,8 +193,116 @@ async def cmd_users(token: str, chat_id: str) -> None:
         status = "✅" if u.get("is_active") else "⏸️"
         watchlist = u.get("coin_watchlist", [])
         wl_count = len(watchlist) if watchlist else 0
+        shadow_mark = " 👻" if u.get("is_shadow") else ""
         lines.append(
-            f"{status} `{u['username']}` (id:{u['id']}) — watchlist {wl_count}개"
+            f"{status} `{u['username']}` (id:{u['id']})"
+            f" — watchlist {wl_count}개{shadow_mark}"
         )
 
     await send_message(token, chat_id, "\n".join(lines))
+
+
+async def cmd_shadow(token: str, chat_id: str) -> None:
+    """shadow 유저 성과 요약."""
+    users = await get_active_users()
+    shadow_users = [u for u in users if u.get("is_shadow")]
+
+    if not shadow_users:
+        await send_message(token, chat_id, "👻 등록된 shadow 유저가 없습니다.")
+        return
+
+    for su in shadow_users:
+        uid = su["id"]
+        uname = su["username"]
+        portfolio = await get_user_portfolio(uid)
+        all_trades = await get_trades(limit=200, user_id=uid)
+
+        # 잔고 파싱
+        krw = 0.0
+        holdings: list[str] = []
+        for item in portfolio:
+            bal = float(item.get("balance", 0))
+            if bal <= 0:
+                continue
+            if item["currency"] == "KRW":
+                krw = bal
+            else:
+                avg = float(item.get("avg_buy_price", 0))
+                holdings.append(
+                    f"  • {item['currency']}: `{bal:.4f}` @ `{avg:,.0f}`"
+                )
+
+        buys = [t for t in all_trades if t.get("side") == "buy"]
+        sells = [t for t in all_trades if t.get("side") == "sell"]
+
+        # 실현 손익 (BUY→SELL 페어)
+        buy_map: dict[str, list] = {}
+        for t in reversed(all_trades):
+            if t["side"] == "buy":
+                buy_map.setdefault(t["market"], []).append(t)
+
+        realized_pnl = 0.0
+        win_count = 0
+        sell_count = 0
+        for t in reversed(all_trades):
+            if t["side"] != "sell":
+                continue
+            market_buys = buy_map.get(t["market"], [])
+            if not market_buys:
+                continue
+            bt = market_buys.pop(0)
+            bp = float(bt.get("price_krw") or 0)
+            sp = float(t.get("price_krw") or 0)
+            vol = float(t.get("volume") or 0)
+            if bp > 0 and sp > 0:
+                pnl = (sp - bp) * vol
+                realized_pnl += pnl
+                sell_count += 1
+                if pnl > 0:
+                    win_count += 1
+
+        risk = su.get("risk_settings") or {}
+        initial_krw = float(risk.get("initial_krw", 1_000_000))
+        total_value = krw + sum(
+            float(item.get("balance", 0)) * float(item.get("avg_buy_price", 0))
+            for item in portfolio
+            if item["currency"] != "KRW" and float(item.get("balance", 0)) > 0
+        )
+        return_pct = (
+            (total_value - initial_krw) / initial_krw * 100
+            if initial_krw > 0 else 0
+        )
+
+        lines = [
+            f"👻 *shadow: {uname}*\n",
+            f"💰 KRW 잔고: `{krw:,.0f}원`",
+            f"📊 평가 금액: `{total_value:,.0f}원`",
+            f"📈 수익률: `{return_pct:+.2f}%`",
+            f"🔄 매수 `{len(buys)}건` / 매도 `{len(sells)}건`",
+        ]
+        if sell_count > 0:
+            win_rate = win_count / sell_count * 100
+            lines.append(f"🎯 승률: `{win_rate:.0f}%` ({win_count}/{sell_count})")
+            lines.append(f"💵 실현 손익: `{realized_pnl:+,.0f}원`")
+
+        if holdings:
+            lines.append("\n*보유 포지션:*")
+            lines.extend(holdings)
+
+        recent = all_trades[:5]
+        if recent:
+            lines.append("\n*최근 거래:*")
+            for t in recent:
+                side_emoji = "🟢" if t["side"] == "buy" else "🔴"
+                coin = t["market"].replace("KRW-", "")
+                vol = float(t.get("volume") or 0)
+                price = float(t.get("price_krw") or 0)
+                ts = (t.get("executed_at") or t.get("created_at", ""))[:16].replace(
+                    "T", " "
+                )
+                lines.append(
+                    f"  {side_emoji} {coin} {t['side']} "
+                    f"`{vol:.4f}` @ `{price:,.0f}` ({ts})"
+                )
+
+        await send_message(token, chat_id, "\n".join(lines))

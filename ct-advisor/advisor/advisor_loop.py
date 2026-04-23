@@ -10,10 +10,10 @@ import json
 import logging
 from typing import Any
 
-from infra.api.portfolio import get_user_portfolio
+from infra.api.portfolio import get_user_portfolio, shadow_execute
 from infra.api.user import get_active_users
 from infra.redis_client import get_redis
-from infra.redis_pubsub import publish_to_telegram
+from infra.redis_pubsub import publish_master, publish_to_telegram
 from utils.config import Settings
 
 from advisor.position_sizing import (
@@ -79,6 +79,7 @@ async def _handle_signal(data: dict[str, Any], settings: Settings) -> None:
     # 유저 정보 조회 (risk_settings 포함)
     risk = _DEFAULT_RISK.copy()
     user_id = None
+    is_shadow = False
 
     if chat_id:
         users = await get_active_users()
@@ -88,6 +89,7 @@ async def _handle_signal(data: dict[str, Any], settings: Settings) -> None:
         )
         if user:
             user_id = user["id"]
+            is_shadow = user.get("is_shadow", False)
             user_risk = user.get("risk_settings") or {}
             risk.update(user_risk)
 
@@ -101,7 +103,8 @@ async def _handle_signal(data: dict[str, Any], settings: Settings) -> None:
             f"⚠️ `{market}` {signal_type} 시그널 차단: "
             f"일일 매매 횟수 초과 ({daily_count}/{max_daily})"
         )
-        await publish_to_telegram(data)
+        if not is_shadow:
+            await publish_to_telegram(data)
         return
 
     # 포트폴리오 조회
@@ -143,12 +146,13 @@ async def _handle_signal(data: dict[str, Any], settings: Settings) -> None:
         data["sizing_adjustments"] = buy_rec.adjustments
 
         if amount_krw < 5000:
-            data["type"] = "text"
-            data["text"] = (
-                f"⚠️ `{market}` BUY 시그널 — "
-                f"주문 금액 부족 ({amount_krw:,.0f}원 < 5,000원)"
-            )
-            await publish_to_telegram(data)
+            if not is_shadow:
+                data["type"] = "text"
+                data["text"] = (
+                    f"⚠️ `{market}` BUY 시그널 — "
+                    f"주문 금액 부족 ({amount_krw:,.0f}원 < 5,000원)"
+                )
+                await publish_to_telegram(data)
             logger.info("advisor: %s BUY 금액 부족 (%.0f원)", market, amount_krw)
             return
 
@@ -189,4 +193,63 @@ async def _handle_signal(data: dict[str, Any], settings: Settings) -> None:
             market, sell_rec.recommended_pct, coin_balance,
         )
 
+    # shadow 유저: 텔레그램 대신 자동 체결
+    if is_shadow and user_id:
+        await _shadow_auto_execute(data, user_id, market, signal_type, settings)
+        return
+
     await publish_to_telegram(data)
+
+
+async def _shadow_auto_execute(
+    data: dict[str, Any],
+    user_id: int,
+    market: str,
+    signal_type: str,
+    settings: Settings,
+) -> None:
+    """shadow 유저 자동 체결 — ct-api shadow-execute 호출."""
+    close_price = data.get("close_price", 0)
+    if close_price <= 0:
+        return
+
+    payload: dict[str, Any] = {
+        "user_id": user_id,
+        "market": market,
+        "price": close_price,
+    }
+
+    if signal_type == "BUY":
+        amount_krw = data.get("buy_amount_krw", 0)
+        if amount_krw < 5000:
+            return
+        payload["side"] = "buy"
+        payload["amount_krw"] = amount_krw
+    elif signal_type == "SELL":
+        sell_pct = data.get("sell_recommended_pct", 60)
+        payload["side"] = "sell"
+        payload["sell_pct"] = sell_pct
+    else:
+        return
+
+    try:
+        result = await shadow_execute(payload)
+        if result.get("executed"):
+            coin = market.replace("KRW-", "")
+            side = "매수" if signal_type == "BUY" else "매도"
+            qty = result.get("qty", 0)
+            amt = result.get("amount_krw", 0)
+            logger.info(
+                "shadow 자동체결: %s %s %.8f개 (%.0f원)",
+                market, side, qty, amt,
+            )
+            master_chat = str(settings.master_telegram_id)
+            await publish_master(
+                master_chat,
+                f"👻 shadow {side}: `{coin}` "
+                f"{qty:.4f}개 ({amt:,.0f}원)",
+            )
+        else:
+            logger.info("shadow 체결 스킵: %s %s", market, result.get("reason"))
+    except Exception:
+        logger.exception("shadow 자동체결 실패: %s", market)

@@ -137,6 +137,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 ALTER TABLE active_alerts
                 ADD COLUMN IF NOT EXISTS user_id INT DEFAULT NULL
             """))
+            # users에 is_shadow 컬럼 추가
+            await conn.execute(text("""
+                ALTER TABLE users
+                ADD COLUMN IF NOT EXISTS is_shadow BOOLEAN DEFAULT false
+            """))
             # tracked_assets에 현재가 컬럼 추가
             await conn.execute(text("""
                 ALTER TABLE tracked_assets

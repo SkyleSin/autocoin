@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+import logging
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
 from fastapi import APIRouter, Depends, status
-from pydantic import BaseModel
-from sqlalchemy import delete, select
-from sqlalchemy.ext.asyncio import AsyncSession
-
+from models.trade import Trade
 from models.user_portfolio import UserPortfolio
+from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from utils.deps import get_db
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/portfolios", tags=["portfolios"])
 
@@ -121,3 +125,132 @@ async def sync_portfolio(
 
     await db.commit()
     return {"user_id": user_id, "upserted": upserted, "removed": removed}
+
+
+# ---------------------------------------------------------------------------
+# Shadow 가상 체결
+# ---------------------------------------------------------------------------
+
+FEE_RATE = Decimal("0.0025")  # 빗썸 0.25%
+
+
+class ShadowExecuteRequest(BaseModel):
+    """shadow 유저 가상 체결 요청."""
+    user_id: int
+    market: str
+    side: str  # "buy" / "sell"
+    price: float
+    amount_krw: float = 0  # BUY 시 투입 금액
+    sell_pct: int = 0  # SELL 시 매도 비율
+
+
+@router.post("/shadow-execute", status_code=status.HTTP_200_OK)
+async def shadow_execute(
+    req: ShadowExecuteRequest,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """shadow 유저 가상 체결 — trade 기록 + 포트폴리오 갱신."""
+    price = Decimal(str(req.price))
+    currency = req.market.split("-")[1] if "-" in req.market else ""
+
+    # 현재 포트폴리오 조회
+    krw_row = (await db.execute(
+        select(UserPortfolio).where(
+            UserPortfolio.user_id == req.user_id,
+            UserPortfolio.currency == "KRW",
+        )
+    )).scalar_one_or_none()
+    coin_row = (await db.execute(
+        select(UserPortfolio).where(
+            UserPortfolio.user_id == req.user_id,
+            UserPortfolio.currency == currency,
+        )
+    )).scalar_one_or_none()
+
+    krw_balance = krw_row.balance if krw_row else Decimal("0")
+    coin_balance = coin_row.balance if coin_row else Decimal("0")
+
+    if req.side == "buy":
+        amount = Decimal(str(req.amount_krw))
+        if amount <= 0 or amount > krw_balance:
+            return {"executed": False, "reason": "잔고 부족"}
+        fee = amount * FEE_RATE
+        qty = (amount - fee) / price
+
+        # KRW 차감
+        if krw_row:
+            krw_row.balance -= amount
+        # 코인 추가 (평균 매수가 갱신)
+        if coin_row and coin_row.balance > 0:
+            total_cost = coin_row.avg_buy_price * coin_row.balance + price * qty
+            coin_row.balance += qty
+            coin_row.avg_buy_price = total_cost / coin_row.balance
+        elif coin_row:
+            coin_row.balance = qty
+            coin_row.avg_buy_price = price
+        else:
+            db.add(UserPortfolio(
+                user_id=req.user_id, currency=currency,
+                balance=qty, avg_buy_price=price,
+            ))
+        # trade 기록
+        trade = Trade(
+            user_id=req.user_id, market=req.market, side="buy",
+            volume=qty, price_krw=price,
+            status="shadow", notes="shadow auto-execute",
+            executed_at=datetime.now(UTC),
+        )
+        db.add(trade)
+        await db.commit()
+        logger.info(
+            "shadow BUY %s: %.0f원 → %.8f개 (fee=%.0f)",
+            req.market, amount, qty, fee,
+        )
+        return {
+            "executed": True, "side": "buy",
+            "qty": float(qty), "amount_krw": float(amount),
+            "fee": float(fee), "trade_id": str(trade.id),
+        }
+
+    elif req.side == "sell":
+        if coin_balance <= 0:
+            return {"executed": False, "reason": "보유량 없음"}
+        sell_pct = min(req.sell_pct, 100)
+        sell_qty = coin_balance * Decimal(str(sell_pct)) / Decimal("100")
+        sell_amount = sell_qty * price
+        fee = sell_amount * FEE_RATE
+        net = sell_amount - fee
+
+        # 코인 차감
+        if coin_row:
+            coin_row.balance -= sell_qty
+            if coin_row.balance <= 0:
+                coin_row.balance = Decimal("0")
+        # KRW 추가
+        if krw_row:
+            krw_row.balance += net
+        else:
+            db.add(UserPortfolio(
+                user_id=req.user_id, currency="KRW",
+                balance=net,
+            ))
+        # trade 기록
+        trade = Trade(
+            user_id=req.user_id, market=req.market, side="sell",
+            volume=sell_qty, price_krw=price,
+            status="shadow", notes="shadow auto-execute",
+            executed_at=datetime.now(UTC),
+        )
+        db.add(trade)
+        await db.commit()
+        logger.info(
+            "shadow SELL %s: %.8f개 × %.0f = %.0f원 (fee=%.0f)",
+            req.market, sell_qty, price, sell_amount, fee,
+        )
+        return {
+            "executed": True, "side": "sell",
+            "qty": float(sell_qty), "amount_krw": float(sell_amount),
+            "fee": float(fee), "trade_id": str(trade.id),
+        }
+
+    return {"executed": False, "reason": "invalid side"}
