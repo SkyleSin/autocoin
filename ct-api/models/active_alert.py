@@ -13,11 +13,15 @@ from models.base import Base
 
 
 class ActiveAlert(Base):
-    """현재 활성 상태인 시그널 알림. 마켓+타임프레임당 최대 1개."""
+    """현재 활성 상태인 시그널 알림. 유저+마켓+타임프레임당 최대 1개."""
 
     __tablename__ = "active_alerts"
     __table_args__ = (
-        Index("uq_active_alerts_market_tf", "market", "timeframe", unique=True),
+        Index(
+            "uq_active_alerts_user_market_tf",
+            "user_id", "market", "timeframe",
+            unique=True,
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -25,7 +29,7 @@ class ActiveAlert(Base):
         primary_key=True,
         default=uuid.uuid4,
     )
-    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False)
     market: Mapped[str] = mapped_column(String(32), nullable=False)
     timeframe: Mapped[str] = mapped_column(String(8), nullable=False)
     signal_type: Mapped[str] = mapped_column(

@@ -31,6 +31,7 @@ async def notify_signal(
     if not (settings.telegram_bot_token and chat_id):
         return
 
+    user_id = user_data["id"] if user_data else None
     alert_resp = await check_alert({
         "market": market,
         "timeframe": timeframe,
@@ -39,6 +40,7 @@ async def notify_signal(
         "reasons": reasons,
         "indicators": indicators,
         "remind_interval_sec": settings.alert_remind_interval_sec,
+        "user_id": user_id,
     })
     action = alert_resp.get("action", "skip")
 

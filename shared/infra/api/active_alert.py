@@ -9,16 +9,18 @@ async def check_alert(data: dict) -> dict:
     return await api_post("/api/active-alerts/check", json=data)
 
 
-async def mark_alert_passed(market: str) -> dict:
-    return await api_post(
-        "/api/active-alerts/mark-passed", json={"market": market},
-    )
+async def mark_alert_passed(market: str, *, user_id: int | None = None) -> dict:
+    payload: dict = {"market": market}
+    if user_id is not None:
+        payload["user_id"] = user_id
+    return await api_post("/api/active-alerts/mark-passed", json=payload)
 
 
-async def mark_alert_acted(market: str) -> dict:
-    return await api_patch(
-        "/api/active-alerts/mark-acted", json={"market": market},
-    )
+async def mark_alert_acted(market: str, *, user_id: int | None = None) -> dict:
+    payload: dict = {"market": market}
+    if user_id is not None:
+        payload["user_id"] = user_id
+    return await api_patch("/api/active-alerts/mark-acted", json=payload)
 
 
 async def delete_alerts(market: str, timeframe: str) -> None:

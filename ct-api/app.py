@@ -137,6 +137,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 ALTER TABLE active_alerts
                 ADD COLUMN IF NOT EXISTS user_id INT DEFAULT NULL
             """))
+            # active_alerts: user_id NOT NULL + 유저별 유니크 인덱스로 전환
+            await conn.execute(text("""
+                DELETE FROM active_alerts WHERE user_id IS NULL
+            """))
+            await conn.execute(text("""
+                ALTER TABLE active_alerts
+                ALTER COLUMN user_id SET NOT NULL
+            """))
+            await conn.execute(text("""
+                DROP INDEX IF EXISTS uq_active_alerts_market_tf
+            """))
+            await conn.execute(text("""
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_active_alerts_user_market_tf
+                ON active_alerts (user_id, market, timeframe)
+            """))
             # users에 is_shadow 컬럼 추가
             await conn.execute(text("""
                 ALTER TABLE users

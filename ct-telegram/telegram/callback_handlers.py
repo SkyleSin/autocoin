@@ -93,7 +93,7 @@ async def _handle_trade_execute(
             "chat_id": chat_id,
         },
     })
-    await mark_alert_acted(market)
+    await mark_alert_acted(market, user_id=user_id)
     await send_message(token, chat_id, f"✅ `{market}` 매수 {buy_amount:,.0f}원 주문 전달")
     logger.info("trade_execute: user=%d %s BUY %d원", user_id, market, buy_amount)
 
@@ -131,7 +131,7 @@ async def _handle_trade_sell(
             "chat_id": chat_id,
         },
     })
-    await mark_alert_acted(market)
+    await mark_alert_acted(market, user_id=user_id)
     await send_message(
         token, chat_id,
         f"✅ `{market}` 매도 {pct}% ({sell_volume:.8f}) 주문 전달",
@@ -150,6 +150,7 @@ async def _resolve_user_id(chat_id: str) -> int | None:
 
 async def _handle_pass(token: str, chat_id: str, market: str) -> None:
     """패스 처리 → ActiveAlert 상태 변경."""
-    await mark_alert_passed(market)
+    user_id = await _resolve_user_id(chat_id)
+    await mark_alert_passed(market, user_id=user_id)
     await send_message(token, chat_id, f"⏭️ `{market}` 시그널을 패스했습니다.")
     logger.info("trade_pass: %s", market)

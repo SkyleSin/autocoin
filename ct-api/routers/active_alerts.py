@@ -5,12 +5,11 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
+from models.active_alert import ActiveAlert
 from pydantic import BaseModel
+from services.alert_service import check_alert, mark_passed
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from models.active_alert import ActiveAlert
-from services.alert_service import check_alert, mark_passed
 from utils.deps import get_db
 
 router = APIRouter(prefix="/api/active-alerts", tags=["active-alerts"])
@@ -24,10 +23,12 @@ class CheckBody(BaseModel):
     reasons: list[str] = []
     indicators: dict | None = None
     remind_interval_sec: float = 600.0
+    user_id: int | None = None
 
 
 class MarketBody(BaseModel):
     market: str
+    user_id: int | None = None
 
 
 @router.post("/check")
@@ -43,6 +44,7 @@ async def check(
         body.confidence,
         body.reasons,
         body.indicators,
+        user_id=body.user_id,
         remind_interval_sec=body.remind_interval_sec,
     )
     await db.commit()
@@ -54,7 +56,7 @@ async def passed(
     body: MarketBody,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict:
-    ok = await mark_passed(db, body.market)
+    ok = await mark_passed(db, body.market, user_id=body.user_id)
     await db.commit()
     return {"ok": ok}
 
@@ -66,9 +68,10 @@ async def acted(
 ) -> dict:
     from datetime import UTC, datetime
 
-    rows = (await db.execute(
-        select(ActiveAlert).where(ActiveAlert.market == body.market)
-    )).scalars().all()
+    stmt = select(ActiveAlert).where(ActiveAlert.market == body.market)
+    if body.user_id is not None:
+        stmt = stmt.where(ActiveAlert.user_id == body.user_id)
+    rows = (await db.execute(stmt)).scalars().all()
     updated = 0
     for row in rows:
         row.acted_at = datetime.now(UTC)

@@ -6,10 +6,9 @@ import json
 import logging
 from datetime import UTC, datetime
 
+from models.active_alert import ActiveAlert
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from models.active_alert import ActiveAlert
 
 logger = logging.getLogger(__name__)
 
@@ -64,11 +63,13 @@ class AlertAction:
 async def mark_passed(
     session: AsyncSession,
     market: str,
+    user_id: int | None = None,
 ) -> bool:
     """사용자 패스 → ActiveAlert에 passed 마킹. 마켓의 모든 타임프레임 대상."""
-    results = (await session.execute(
-        select(ActiveAlert).where(ActiveAlert.market == market)
-    )).scalars().all()
+    stmt = select(ActiveAlert).where(ActiveAlert.market == market)
+    if user_id is not None:
+        stmt = stmt.where(ActiveAlert.user_id == user_id)
+    results = (await session.execute(stmt)).scalars().all()
     if not results:
         return False
     now = datetime.now(UTC)
@@ -85,6 +86,7 @@ async def check_alert_preview(
     timeframe: str,
     *,
     signal_type: str,
+    user_id: int | None = None,
 ) -> str:
     """LLM 호출 전 알림 가능 여부만 간단 확인 (DB 변경 없음).
 
@@ -94,12 +96,13 @@ async def check_alert_preview(
     if signal_type == "HOLD":
         return AlertAction.SKIP
 
-    existing = (await session.execute(
-        select(ActiveAlert).where(
-            ActiveAlert.market == market,
-            ActiveAlert.timeframe == timeframe,
-        )
-    )).scalar_one_or_none()
+    stmt = select(ActiveAlert).where(
+        ActiveAlert.market == market,
+        ActiveAlert.timeframe == timeframe,
+    )
+    if user_id is not None:
+        stmt = stmt.where(ActiveAlert.user_id == user_id)
+    existing = (await session.execute(stmt)).scalar_one_or_none()
 
     if existing is None:
         return AlertAction.NEW
@@ -137,6 +140,7 @@ async def check_alert(
     reasons: list[str],
     indicators: dict | None,
     *,
+    user_id: int | None = None,
     remind_interval_sec: float = 600.0,
 ) -> str:
     """시그널에 대해 알림을 보내야 하는지 판단하고 DB 상태 업데이트.
@@ -144,12 +148,13 @@ async def check_alert(
     Returns:
         AlertAction 상수 (new, changed, remind, skip, cleared)
     """
-    existing = (await session.execute(
-        select(ActiveAlert).where(
-            ActiveAlert.market == market,
-            ActiveAlert.timeframe == timeframe,
-        )
-    )).scalar_one_or_none()
+    stmt = select(ActiveAlert).where(
+        ActiveAlert.market == market,
+        ActiveAlert.timeframe == timeframe,
+    )
+    if user_id is not None:
+        stmt = stmt.where(ActiveAlert.user_id == user_id)
+    existing = (await session.execute(stmt)).scalar_one_or_none()
 
     now = datetime.now(UTC)
 
@@ -161,6 +166,7 @@ async def check_alert(
     # 기존 알림 없음 → 신규
     if existing is None:
         session.add(ActiveAlert(
+            user_id=user_id,
             market=market,
             timeframe=timeframe,
             signal_type=signal_type,
@@ -221,6 +227,20 @@ async def check_alert(
         logger.info(
             "alert pass cleared (sr/conf changed): %s %s %s",
             market, timeframe, signal_type,
+        )
+        return AlertAction.CHANGED
+
+    # 동일 시그널 — confidence 유의미 상승 → 즉시 재알림 (추매 기회)
+    conf_diff = confidence - existing.confidence
+    if conf_diff >= _PASS_CONFIDENCE_THRESHOLD:
+        old_conf = existing.confidence
+        existing.confidence = confidence
+        existing.reasons = json.dumps(reasons, ensure_ascii=False)
+        existing.indicators = indicators
+        existing.last_alerted_at = now
+        logger.info(
+            "alert confidence boost: %s %s %s (%.2f → %.2f, +%.2f)",
+            market, timeframe, signal_type, old_conf, confidence, conf_diff,
         )
         return AlertAction.CHANGED
 
