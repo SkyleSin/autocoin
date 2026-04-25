@@ -12,7 +12,6 @@ from contextlib import asynccontextmanager
 import uvicorn
 from fastapi import FastAPI
 from models.active_alert import ActiveAlert
-from models.app_config import AppConfig
 from models.candle import Candle
 from models.indicator_snapshot import IndicatorSnapshot
 from models.market import Market
@@ -23,7 +22,6 @@ from models.user import User
 from models.user_portfolio import UserPortfolio
 from routers.active_alerts import router as active_alerts_router
 from routers.candles import router as candles_router
-from routers.config import router as config_router
 from routers.indicator_snapshots import router as snapshots_router
 from routers.markets import router as markets_router
 from routers.portfolios import router as portfolios_router
@@ -69,7 +67,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 TrackedAsset.__table__,
                 Signal.__table__,
                 Trade.__table__,
-                AppConfig.__table__,
                 ActiveAlert.__table__,
                 IndicatorSnapshot.__table__,
                 UserPortfolio.__table__,
@@ -183,7 +180,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(snapshots_router)
     app.include_router(trades_router)
     app.include_router(users_router)
-    app.include_router(config_router)
     app.include_router(active_alerts_router)
     app.include_router(markets_router)
     app.include_router(portfolios_router)
