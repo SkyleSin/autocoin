@@ -16,10 +16,6 @@ from models.app_config import AppConfig
 from models.candle import Candle
 from models.indicator_snapshot import IndicatorSnapshot
 from models.market import Market
-from models.pattern_accuracy import PatternAccuracy
-from models.pattern_config import PatternConfig
-from models.pattern_evaluation import PatternEvaluation
-from models.shadow_trade import ShadowPortfolio, ShadowTrade
 from models.signal import Signal
 from models.tracked_asset import TrackedAsset
 from models.trade import Trade
@@ -29,14 +25,9 @@ from routers.active_alerts import router as active_alerts_router
 from routers.candles import router as candles_router
 from routers.config import router as config_router
 from routers.indicator_snapshots import router as snapshots_router
-from routers.indicator_weights import router as indicator_weights_router
 from routers.markets import router as markets_router
-from routers.pattern_accuracy import router as pattern_accuracy_router
-from routers.pattern_configs import router as pattern_configs_router
-from routers.pattern_evaluations import router as pattern_evaluations_router
 from routers.portfolios import router as portfolios_router
 from routers.reports import router as reports_router
-from routers.shadow import router as shadow_router
 from routers.signals import router as signals_router
 from routers.tracked_assets import router as tracked_assets_router
 from routers.trades import router as trades_router
@@ -80,11 +71,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 Trade.__table__,
                 AppConfig.__table__,
                 ActiveAlert.__table__,
-                PatternAccuracy.__table__,
-                PatternConfig.__table__,
-                PatternEvaluation.__table__,
-                ShadowTrade.__table__,
-                ShadowPortfolio.__table__,
                 IndicatorSnapshot.__table__,
                 UserPortfolio.__table__,
                 Market.__table__,
@@ -199,14 +185,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(users_router)
     app.include_router(config_router)
     app.include_router(active_alerts_router)
-    app.include_router(indicator_weights_router)
-    app.include_router(pattern_accuracy_router)
-    app.include_router(pattern_configs_router)
     app.include_router(markets_router)
-    app.include_router(pattern_evaluations_router)
     app.include_router(portfolios_router)
     app.include_router(reports_router)
-    app.include_router(shadow_router)
     return app
 
 

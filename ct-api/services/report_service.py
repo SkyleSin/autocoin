@@ -10,8 +10,6 @@ from models.trade import Trade
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.accuracy_service import get_accuracy_summary, verify_pending_signals
-
 logger = logging.getLogger(__name__)
 
 # 패턴 영문→한글 매핑
@@ -110,38 +108,6 @@ async def _section_daily_trades(session: AsyncSession, now: datetime) -> list[st
     return lines
 
 
-async def _section_pattern_accuracy(session: AsyncSession) -> list[str]:
-    """패턴 적중률 (누적) 섹션."""
-    accuracy = await get_accuracy_summary(session, include_inactive=True)
-    if not accuracy:
-        return []
-
-    try:
-        from services.pattern_service import get_pattern_ko
-        pattern_ko = await get_pattern_ko(session)
-    except Exception:
-        pattern_ko = _PATTERN_KO
-
-    lines = ["🎯 *패턴 적중률 (누적)*"]
-    total_all = sum(a["total"] for a in accuracy if a["total"] > 0)
-    hit_all = sum(a["hit"] for a in accuracy if a["total"] > 0)
-    for a in accuracy:
-        ko = pattern_ko.get(a["pattern"], _PATTERN_KO.get(a["pattern"], a["pattern"]))
-        if a["total"] > 0:
-            tag = "" if a.get("active", True) else " 📋관찰"
-            lines.append(
-                f"• {ko}: `{a['accuracy']:.0f}%`"
-                f" ({a['hit']}/{a['total']}){tag}"
-            )
-        elif not a.get("active", True):
-            lines.append(f"• {ko}: `N/A` (0건) 📋관찰")
-    if total_all > 0:
-        overall = hit_all / total_all * 100
-        lines.append(f"• *전체*: `{overall:.0f}%` ({hit_all}/{total_all})")
-    lines.append("")
-    return lines
-
-
 async def _section_topdown_indicators(session: AsyncSession) -> list[str]:
     """탑다운 활성 지표 섹션."""
     try:
@@ -167,18 +133,6 @@ async def _section_topdown_indicators(session: AsyncSession) -> list[str]:
     top3_sell = ", ".join(f"{n}({s:.2f})" for n, s, _ in SELL_4H[:3])
     lines.append(f"  Top3 BUY: {top3_buy}")
     lines.append(f"  Top3 SELL: {top3_sell}")
-
-    from models.indicator_weight import IndicatorWeight
-    from sqlalchemy import func as sa_func
-    db_count = (await session.execute(
-        select(sa_func.count()).select_from(IndicatorWeight).where(
-            IndicatorWeight.timeframe.in_(["4h", "1h", "15m"]),
-        )
-    )).scalar() or 0
-    if db_count > 0:
-        lines.append(f"  DB 가중치: {db_count}개 적용 중")
-    else:
-        lines.append("  DB 가중치: 미수집 (백테스트 기본값)")
     lines.append("")
     return lines
 
@@ -208,37 +162,6 @@ async def _section_recent_signals(
             f"• {emoji} {s.market} {s.signal_type} "
             f"({kst:%H:%M}) {src_label} {verified_mark}"
         )
-    lines.append("")
-    return lines
-
-
-async def _section_shadow_summary(session: AsyncSession) -> list[str]:
-    """섀도우 트레이딩 요약 섹션."""
-    try:
-        from services.shadow_service import get_shadow_summary
-        shadow = await get_shadow_summary(session)
-    except Exception:
-        return []
-
-    if shadow["buy_count"] == 0 and shadow["sell_count"] == 0:
-        return []
-
-    lines = ["🔮 *섀도우 트레이딩* (자동화 가정)"]
-    lines.append(f"• 수익률: `{shadow['return_pct']:+.2f}%`")
-    lines.append(
-        f"• 매수 `{shadow['buy_count']}건` / 매도 `{shadow['sell_count']}건`"
-    )
-    if shadow["sell_count"] > 0:
-        lines.append(f"• 승률: `{shadow['win_rate']:.0f}%`")
-    lines.append(
-        f"• 실현 손익: `{shadow['total_pnl']:+,.0f}원`"
-        f" | 수수료: `{shadow['total_fees']:,.0f}원`"
-    )
-    if shadow["positions"]:
-        for p in shadow["positions"]:
-            lines.append(
-                f"• {p['market']}: `{p['qty']:.4f}` @ `{p['avg_price']:,.0f}`"
-            )
     lines.append("")
     return lines
 
@@ -541,48 +464,6 @@ async def _detail_pattern_accuracy(session: AsyncSession) -> list[str]:
     return lines
 
 
-async def _detail_all_pattern_accuracy(session: AsyncSession) -> list[str]:
-    """전체 패턴 적중률 (활성+비활성) 섹션."""
-    all_accuracy = await get_accuracy_summary(session, include_inactive=True)
-    if not all_accuracy:
-        return []
-
-    try:
-        from services.pattern_service import get_pattern_ko
-        pattern_ko = await get_pattern_ko(session)
-    except Exception:
-        pattern_ko = _PATTERN_KO
-
-    active_acc = [a for a in all_accuracy if a.get("active", True)]
-    inactive_acc = [a for a in all_accuracy if not a.get("active", True)]
-
-    lines = ["📐 *전체 패턴 적중률*"]
-    lines.append("```")
-    lines.append(f"{'패턴':<6} {'감지':>4} {'적중':>4} {'적중률':>5} {'상태':>4}")
-    lines.append("-" * 30)
-    for row in active_acc:
-        ko = pattern_ko.get(
-            row["pattern"], _PATTERN_KO.get(row["pattern"], row["pattern"])
-        )
-        rate = f"{row['accuracy']:.0f}%" if row["total"] > 0 else "N/A"
-        lines.append(
-            f"{ko[:6]:<6} {row['total']:>4}"
-            f" {row['hit']:>4} {rate:>5} {'활성':>4}"
-        )
-    for row in inactive_acc:
-        ko = pattern_ko.get(
-            row["pattern"], _PATTERN_KO.get(row["pattern"], row["pattern"])
-        )
-        rate = f"{row['accuracy']:.0f}%" if row["total"] > 0 else "N/A"
-        lines.append(
-            f"{ko[:6]:<6} {row['total']:>4}"
-            f" {row['hit']:>4} {rate:>5} {'관찰':>4}"
-        )
-    lines.append("```")
-    lines.append("_활성화 기준: 적중률 50%+_\n")
-    return lines
-
-
 async def _detail_hold_stats(session: AsyncSession) -> list[str]:
     """HOLD 판단 요약 섹션."""
     hold_stats = (await session.execute(text("""
@@ -654,38 +535,6 @@ async def _detail_signal_counts(session: AsyncSession) -> list[str]:
     ]
 
 
-async def _detail_shadow(session: AsyncSession) -> list[str]:
-    """섀도우 트레이딩 상세 섹션."""
-    try:
-        from services.shadow_service import get_shadow_summary
-        shadow = await get_shadow_summary(session)
-    except Exception:
-        return []
-
-    if shadow["buy_count"] == 0 and shadow["sell_count"] == 0:
-        return []
-
-    lines = ["\n🔮 *섀도우 트레이딩* (자동화 가정)"]
-    lines.append("```")
-    lines.append("초기 자본:  1,000,000원")
-    lines.append(f"현재 평가:  {shadow['total_value']:>12,.0f}원")
-    lines.append(f"수익률:     {shadow['return_pct']:>+11.2f}%")
-    lines.append(f"실현 손익:  {shadow['total_pnl']:>+12,.0f}원")
-    lines.append(f"수수료:     {shadow['total_fees']:>12,.0f}원")
-    lines.append(f"매수/매도:  {shadow['buy_count']}건 / {shadow['sell_count']}건")
-    if shadow["sell_count"] > 0:
-        lines.append(f"승률:       {shadow['win_rate']:>11.0f}%")
-    lines.append("```")
-    if shadow["positions"]:
-        lines.append("_보유:_")
-        for p in shadow["positions"]:
-            lines.append(
-                f"  {p['market']}: `{p['qty']:.4f}` @ `{p['avg_price']:,.0f}`"
-            )
-    lines.append("")
-    return lines
-
-
 # ──────────────────────────────────────────────
 # 메인 함수
 # ──────────────────────────────────────────────
@@ -703,18 +552,8 @@ async def generate_report(
 
     lines.extend(_section_holdings(accounts, ticker_prices))
     lines.extend(await _section_daily_trades(session, now))
-
-    verify_result = await verify_pending_signals(session)
-    if verify_result["verified"] > 0:
-        lines.append(
-            f"🔄 *신규 검증*: {verify_result['verified']}건 "
-            f"(적중 {verify_result['hit']}건)\n"
-        )
-
-    lines.extend(await _section_pattern_accuracy(session))
     lines.extend(await _section_topdown_indicators(session))
     lines.extend(await _section_recent_signals(session, now))
-    lines.extend(await _section_shadow_summary(session))
 
     return "\n".join(lines)
 
@@ -739,10 +578,8 @@ async def generate_detail_report(session: AsyncSession) -> list[str]:
     lines.append("")
 
     lines.extend(await _detail_pattern_accuracy(session))
-    lines.extend(await _detail_all_pattern_accuracy(session))
     lines.extend(await _detail_hold_stats(session))
     lines.extend(await _detail_signal_counts(session))
-    lines.extend(await _detail_shadow(session))
 
     summary = "\n".join(lines)
     return [summary] + card_messages
