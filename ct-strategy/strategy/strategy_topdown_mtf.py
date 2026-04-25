@@ -95,4 +95,20 @@ class StrategyTopdownMTF(BaseStrategy):
             return _make_hold("15m 트리거 미충족", layers, all_reasons)
 
         all_reasons.append(f"[15m] 트리거 충족: {', '.join(fired_15m)}")
+
+        # SR 방향 충돌 체크 — 지지 이탈+매수, 저항 거부+매수 등 논리적 모순 차단
+        _SR_CONFLICT = {
+            "BUY": {"SUPPORT_BREAK", "RESISTANCE_REJECT"},
+            "SELL": {"RESISTANCE_BREAK", "SUPPORT_BOUNCE"},
+        }
+        sr_signal = extra_15m.get("sr_signal", "NONE")
+        if sr_signal in _SR_CONFLICT.get(direction, set()):
+            all_reasons.append(f"[15m] SR 방향 충돌: {direction} vs {sr_signal}")
+            return _make_hold("SR 방향 충돌", layers, all_reasons)
+
+        # SR=NONE 시 multiplier 감쇠 — SR 근거 없는 시그널의 confidence 하향
+        if sr_signal == "NONE":
+            multiplier *= 0.95
+            all_reasons.append("[15m] SR 시그널 없음 → multiplier 5% 감쇠")
+
         return await decide_topdown(direction, dir_score_4h, multiplier, all_reasons, layers)

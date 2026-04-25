@@ -74,6 +74,9 @@ async def _handle_event(event: StrategyEvent, settings: Settings) -> None:
             logger.exception("유저 %s 전략 평가 실패", user_data.get("username"))
 
 
+_SIGNAL_COOLDOWN_SEC = 14400  # 동일 종목·방향 시그널 DB 저장 쿨다운 (4시간)
+
+
 async def _evaluate_for_user(
     event: StrategyEvent, settings: Settings, user_data: dict,
 ) -> None:
@@ -87,6 +90,22 @@ async def _evaluate_for_user(
 
     if meta.get("status") in ("insufficient_data", "compute_failed"):
         return
+
+    # 동일 종목·방향 시그널 쿨다운 — DB 오염 및 통계 왜곡 방지
+    if result.signal_type in ("BUY", "SELL"):
+        r = get_redis()
+        uid = user_data["id"]
+        cooldown_key = f"sig_cooldown:{uid}:{event.market}:{result.signal_type}"
+        if await r.exists(cooldown_key):
+            logger.debug(
+                "시그널 쿨다운 스킵: %s %s %s",
+                event.market, result.signal_type, user_data.get("username"),
+            )
+            return
+        await r.setex(cooldown_key, _SIGNAL_COOLDOWN_SEC, "1")
+        # 반대 방향 쿨다운 제거 (방향 전환 시 즉시 발행 허용)
+        opposite = "SELL" if result.signal_type == "BUY" else "BUY"
+        await r.delete(f"sig_cooldown:{uid}:{event.market}:{opposite}")
 
     close_price = 0.0
     combined_indicators: dict = {}

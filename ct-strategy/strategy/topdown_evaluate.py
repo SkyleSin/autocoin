@@ -69,7 +69,13 @@ async def eval_trigger_15m(
         triggered, fired = trigger_check_v2(snap, close, required_fns, optional_fns)
     else:
         triggered, fired = trigger_check(snap, close, trigger_fns or [])
-    extra = {"close_price": close, "indicators": snap.to_dict()}
+    sr = rebuild_sr(data.get("support_resistance"))
+    extra = {
+        "close_price": close,
+        "indicators": snap.to_dict(),
+        "support_resistance": data.get("support_resistance"),
+        "sr_signal": sr.signal if sr else "NONE",
+    }
     return triggered, fired, extra
 
 
