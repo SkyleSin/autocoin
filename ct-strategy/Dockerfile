@@ -1,4 +1,4 @@
-# ct-strategy: 탑다운 MTF 전략 평가
+# ct-strategy: 분석 + 전략 + safety/shock 판단
 FROM autocoin-base:latest
 
 COPY shared/ ./

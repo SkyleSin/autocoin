@@ -1,6 +1,6 @@
-"""ct-strategy: 전략 평가 독립 프로세스.
+"""ct-strategy: 분석 + 전략 평가 + safety/shock 감시.
 
-Redis Pub/Sub(analysis_ready)에서 이벤트를 수신하여 전략을 실행한다.
+지표 계산, 전략 평가, 안전장치 판단을 담당한다.
 """
 
 from __future__ import annotations
@@ -29,16 +29,23 @@ async def main() -> None:
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, shutdown.set)
 
-    from strategy.strategy_scheduler import strategy_scheduler
+    from analysis_loop import analysis_loop
+    from monitoring.monitor import safety_monitor
+    from monitoring.shock_monitor import shock_monitor
 
-    task = asyncio.create_task(strategy_scheduler(settings), name="strategy-scheduler")
+    tasks = [
+        asyncio.create_task(analysis_loop(settings), name="analysis"),
+        asyncio.create_task(safety_monitor(settings), name="safety"),
+        asyncio.create_task(shock_monitor(settings), name="shock"),
+    ]
 
-    logger.info("ct-strategy 시작")
+    logger.info("ct-strategy 시작 (analysis + safety + shock)")
     await shutdown.wait()
     logger.info("ct-strategy 종료 중...")
 
-    task.cancel()
-    await asyncio.gather(task, return_exceptions=True)
+    for t in tasks:
+        t.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
 
     await close_api_client()
     await close_redis()

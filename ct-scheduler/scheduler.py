@@ -1,4 +1,4 @@
-"""ct-scheduler: 지표 계산 + Safety/Shock 모니터."""
+"""ct-scheduler: 시간 기반 트리거 전용."""
 
 from __future__ import annotations
 
@@ -27,22 +27,15 @@ async def main() -> None:
         loop.add_signal_handler(sig, shutdown.set)
 
     from collect_scheduler import collect_scheduler
-    from safety.monitor import safety_monitor
-    from safety.shock_monitor import shock_monitor
 
-    tasks = [
-        asyncio.create_task(collect_scheduler(settings), name="collect"),
-        asyncio.create_task(safety_monitor(settings), name="safety"),
-        asyncio.create_task(shock_monitor(settings), name="shock"),
-    ]
+    task = asyncio.create_task(collect_scheduler(settings), name="collect")
 
     logger.info("ct-scheduler 시작")
     await shutdown.wait()
     logger.info("ct-scheduler 종료 중...")
 
-    for t in tasks:
-        t.cancel()
-    await asyncio.gather(*tasks, return_exceptions=True)
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
 
     await close_api_client()
     await close_redis()

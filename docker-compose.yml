@@ -65,7 +65,7 @@ services:
     networks:
       - internal
 
-  # ── ct-scheduler: 봉 수집 + 지표 분석 + safety/shock ──
+  # ── ct-scheduler: 시간 기반 트리거 전용 ──
   ct-scheduler:
     image: autocoin-base
     working_dir: /src/ct-scheduler
@@ -73,13 +73,10 @@ services:
       PYTHONPATH: /src/shared:/src/ct-scheduler
       API_BASE_URL: http://ct-api:8000
       REDIS_URL: redis://ct-redis:6379/0
-      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
-      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      MASTER_TELEGRAM_ID: ${MASTER_TELEGRAM_ID}
     env_file:
       - path: .env
         required: false
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     volumes:
       - ./shared:/src/shared:ro
       - ./ct-scheduler:/src/ct-scheduler:ro
@@ -93,7 +90,7 @@ services:
     networks:
       - internal
 
-  # ── ct-strategy: 탑다운 MTF 전략 ──
+  # ── ct-strategy: 분석 + 전략 + safety/shock 판단 ──
   ct-strategy:
     image: autocoin-base
     working_dir: /src/ct-strategy
@@ -102,9 +99,14 @@ services:
       API_BASE_URL: http://ct-api:8000
       REDIS_URL: redis://ct-redis:6379/0
       ENCRYPT_KEY: ${ENCRYPT_KEY}
+      BITHUMB_BASE_URL: ${BITHUMB_BASE_URL:-https://api.bithumb.com}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
     env_file:
       - path: .env
         required: false
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./shared:/src/shared:ro
       - ./ct-strategy:/src/ct-strategy:ro

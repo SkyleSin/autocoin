@@ -1,4 +1,4 @@
-# ct-scheduler: 지표 계산 + Safety/Shock 모니터
+# ct-scheduler: 시간 기반 트리거 전용
 FROM autocoin-base:latest
 
 COPY shared/ ./

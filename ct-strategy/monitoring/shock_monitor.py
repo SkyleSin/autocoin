@@ -1,4 +1,7 @@
-"""뉴스 충격 감지 모니터 — 1분 주기 거래량/변동성/갭 감시."""
+"""뉴스 충격 감지 모니터 — 1분 주기 거래량/변동성/갭 감시.
+
+판단 + 상태 관리를 수행하고, 실행(매도/알림)만 advisor_request로 위임한다.
+"""
 
 from __future__ import annotations
 
@@ -13,11 +16,11 @@ from infra.api.portfolio import get_user_portfolio
 from infra.api.signal import get_latest_signal
 from infra.api.user import get_active_users
 from infra.redis_client import get_redis
-from infra.redis_pubsub import publish_telegram
-from infra.redis_queue import push_trade_job
+from infra.redis_pubsub import publish_defense_request
 from utils.config import Settings
 
-from safety.defense_mode import (
+from monitoring.defense_mode import (
+    _RECOVERY_MIN_HOURS,
     ShockLevel,
     calculate_dynamic_stop_pct,
     calculate_stop_loss,
@@ -29,11 +32,11 @@ from safety.defense_mode import (
     is_defense_active,
     update_trailing,
 )
-from safety.defense_mode import (
+from monitoring.defense_mode import (
     _save_state as _save_defense_state,
 )
-from safety.llm.shock_prompt import build_shock_prompt
-from safety.shock_detector import (
+from monitoring.llm.shock_prompt import build_shock_prompt
+from monitoring.shock_detector import (
     classify_shock,
     detect_price_gap,
     detect_volatility_surge,
@@ -63,16 +66,13 @@ def _get_candles_1m_sync(settings: Settings, market: str, count: int = 30) -> li
 async def _get_indicator_snapshot(
     market: str, tf: str,
 ) -> dict[str, Any] | None:
-    """indicator_snapshots API에서 최근 지표 조회."""
     return await get_latest_snapshot(market, tf)
 
 
 async def _get_nearest_support(market: str) -> float | None:
-    """최근 시그널에서 지지선 추출."""
     last_signal = await get_latest_signal(market)
     if not last_signal or not last_signal.get("indicators"):
         return None
-
     sr = last_signal["indicators"].get("support_resistance")
     if not sr or not isinstance(sr, dict):
         return None
@@ -81,13 +81,11 @@ async def _get_nearest_support(market: str) -> float | None:
 
 
 async def _get_daily_candles(market: str, days: int = 10) -> list[dict]:
-    """최근 N일 일봉 조회 (ct-api)."""
     candles = await get_candles(market, "1d", limit=days, order="desc")
     return list(reversed(candles)) if candles else []
 
 
 async def _get_pre_shock_bb_width(market: str) -> float:
-    """충격 전 3시간 평균 BB 폭 (1H 기준). 없으면 0."""
     snap = await _get_indicator_snapshot(market, "1h")
     if not snap:
         return 0.0
@@ -100,7 +98,6 @@ async def _get_pre_shock_bb_width(market: str) -> float:
 
 
 async def _get_pre_shock_volume_avg(market: str) -> float:
-    """충격 전 거래량 비율 평균. volume_ratio에서 추출."""
     snap = await _get_indicator_snapshot(market, "1h")
     if not snap:
         return 0.0
@@ -116,7 +113,7 @@ async def _call_shock_llm(settings: Settings, prompt: str) -> Any:
 
     if settings.deepseek_api_key:
         try:
-            from safety.llm.deepseek_llm import query_deepseek
+            from monitoring.llm.deepseek_llm import query_deepseek
             result = await query_deepseek(
                 prompt,
                 api_key=settings.deepseek_api_key,
@@ -128,7 +125,7 @@ async def _call_shock_llm(settings: Settings, prompt: str) -> Any:
             logger.warning("shock_llm: DeepSeek 실패, Ollama 폴백", exc_info=True)
 
     if result is None:
-        from safety.llm.local_llm import query_ollama
+        from monitoring.llm.local_llm import query_ollama
         result = await query_ollama(
             prompt,
             base_url=settings.ollama_base_url,
@@ -140,7 +137,7 @@ async def _call_shock_llm(settings: Settings, prompt: str) -> Any:
     return result
 
 
-# ── 충격 감지 + 대응 ──
+# ── 충격 감지 + 상태 관리 → 실행만 advisor에 위임 ──
 
 
 async def _detect_and_handle_shock(
@@ -151,7 +148,7 @@ async def _detect_and_handle_shock(
     currency: str,
     balance: float,
 ) -> None:
-    """단일 마켓 충격 감지 + 방어 모드 진입."""
+    """단일 마켓 충격 감지 → 방어모드 진입 → advisor에 매도/알림만 위임."""
     r = get_redis()
     if await r.exists(f"shock_cooldown:{market}"):
         return
@@ -224,29 +221,31 @@ async def _detect_and_handle_shock(
         llm_result = await _call_shock_llm(settings, prompt)
     except Exception:
         logger.exception("shock: %s LLM 호출 실패", market)
-        if chat_id:
-            await publish_telegram(
-                chat_id,
-                f"⚡ `{market}` 충격 감지 ({shock.level.value})\n"
-                f"신호: {', '.join(shock.triggered_signals)}\n"
-                f"LLM 호출 실패 — 수동 확인 필요",
-            )
+        await publish_defense_request({
+            "type": "shock_llm_fail",
+            "user_id": user_id,
+            "chat_id": chat_id,
+            "market": market,
+            "shock_level": shock.level.value,
+            "triggered_signals": shock.triggered_signals,
+        })
         return
 
     if llm_result.decision != "SELL":
-        if chat_id:
-            await publish_telegram(
-                chat_id,
-                f"⚡ *충격 감지 — HOLD 판단*\n\n"
-                f"마켓: `{market}` ({shock.level.value})\n"
-                f"신호: {', '.join(shock.triggered_signals)}\n"
-                f"현재가: `{current_price:,.0f}`\n\n"
-                f"*LLM:* {llm_result.reason}\n"
-                f"확신도: {llm_result.confidence:.0%}",
-            )
+        # HOLD 판단 → 알림만 위임
+        await publish_defense_request({
+            "type": "shock_hold",
+            "chat_id": chat_id,
+            "market": market,
+            "shock_level": shock.level.value,
+            "triggered_signals": shock.triggered_signals,
+            "current_price": current_price,
+            "llm_reason": llm_result.reason,
+            "llm_confidence": llm_result.confidence,
+        })
         return
 
-    # ── SELL 판단 → 방어 모드 진입 ──
+    # ── SELL 판단 → 방어모드 진입 (상태 관리는 여기서) ──
 
     sr_support = await _get_nearest_support(market)
     daily_candles = await _get_daily_candles(market, 10)
@@ -271,26 +270,31 @@ async def _detect_and_handle_shock(
         current_price, stop_loss, pre_bb, pre_vol,
     )
 
-    # 강도별 즉시 대응
+    # 강도별 매도량 결정 + 상태 저장
+    sell_volume = 0.0
+    action = ""
     if shock.level == ShockLevel.PANIC:
-        await _execute_sell(user_id, market, balance, "전액 (패닉)")
+        sell_volume = balance
+        action = "전액 청산 권고"
         state.partial_sold_pct = 100.0
         await _save_defense_state(state)
     elif shock.level == ShockLevel.DANGER:
-        sell_vol = balance * 0.5
-        await _execute_sell(user_id, market, sell_vol, "50% (위험)")
+        sell_volume = balance * 0.5
+        action = "50% 청산 + 손절선"
         state.partial_sold_pct = 50.0
         await _save_defense_state(state)
+    else:
+        action = "손절선 적용"
 
-    if chat_id:
-        action = {
-            ShockLevel.WARNING: "손절선 적용",
-            ShockLevel.DANGER: "50% 청산 + 손절선",
-            ShockLevel.PANIC: "전액 청산 권고",
-        }.get(shock.level, "")
-
-        await publish_telegram(
-            chat_id,
+    # advisor에 실행만 위임 (매도 + 알림)
+    await publish_defense_request({
+        "type": "shock_sell",
+        "user_id": user_id,
+        "chat_id": chat_id,
+        "market": market,
+        "sell_volume": sell_volume,
+        "sell_reason": f"{action}",
+        "alert_text": (
             f"🛡️ *방어 모드 진입*\n\n"
             f"마켓: `{market}` ({shock.level.value})\n"
             f"신호: {', '.join(shock.triggered_signals)}\n"
@@ -299,32 +303,12 @@ async def _detect_and_handle_shock(
             f"동적기준: {dynamic_pct:.1f}%\n"
             f"대응: {action}\n\n"
             f"*LLM:* {llm_result.reason}\n"
-            f"확신도: {llm_result.confidence:.0%}",
-        )
-
-
-async def _execute_sell(
-    user_id: int,
-    market: str,
-    volume: float,
-    reason: str,
-) -> None:
-    """긴급 매도 — Redis 매매 큐로 전송."""
-    await push_trade_job({
-        "type": "place_order",
-        "user_id": str(user_id),
-        "payload": {
-            "market": market,
-            "side": "ask",
-            "volume": str(volume),
-            "ord_type": "market",
-            "defense_reason": reason,
-        },
+            f"확신도: {llm_result.confidence:.0%}"
+        ),
     })
-    logger.info("shock_sell Redis push: user=%d %s vol=%s (%s)", user_id, market, volume, reason)
 
 
-# ── 방어 모드 관리 ──
+# ── 방어 모드 관리 (상태 관리 + 실행 위임) ──
 
 
 async def _manage_defense(
@@ -335,7 +319,7 @@ async def _manage_defense(
     currency: str,
     balance: float,
 ) -> None:
-    """방어 모드 활성 마켓 관리: 트레일링 + 손절 체크 + 복귀 조건."""
+    """방어 모드 활성 마켓 관리: 트레일링 + 손절/복귀 판단."""
     state = await get_defense_state(market)
     if state is None:
         return
@@ -363,6 +347,7 @@ async def _manage_defense(
 
     await update_trailing(market, price, current_atr)
 
+    # 손절선 이탈 → 매도 위임 + 방어모드 해제
     if await check_stop_loss_hit(market, price):
         logger.warning(
             "shock: %s 손절선 이탈 — price=%.0f stop=%.0f",
@@ -370,20 +355,21 @@ async def _manage_defense(
         )
         remaining_pct = 100.0 - state.partial_sold_pct
         if remaining_pct > 0 and balance > 0:
-            await _execute_sell(user_id, market, balance, f"손절 ({remaining_pct:.0f}%)")
-            state.partial_sold_pct = 100.0
-            await _save_defense_state(state)
-
-            if chat_id:
-                await publish_telegram(
-                    chat_id,
+            await publish_defense_request({
+                "type": "defense_sell",
+                "user_id": user_id,
+                "chat_id": chat_id,
+                "market": market,
+                "sell_volume": balance,
+                "sell_reason": f"손절 ({remaining_pct:.0f}%)",
+                "alert_text": (
                     f"🔴 *손절 매도 실행*\n\n"
                     f"마켓: `{market}`\n"
                     f"현재가: `{price:,.0f}`\n"
                     f"손절선: `{state.stop_loss_price:,.0f}`\n"
-                    f"매도량: `{balance}`",
-                )
-
+                    f"매도량: `{balance}`"
+                ),
+            })
         await exit_defense(market)
         return
 
@@ -400,7 +386,6 @@ async def _manage_defense(
             current_bb_width = (float(bb_u) - float(bb_l)) / float(bb_m)
         current_vol_avg = float(snap_1h.get("volume_ratio", 0))
 
-    from safety.defense_mode import _RECOVERY_MIN_HOURS
     elapsed_h = (datetime.now(UTC) - state.entered_at).total_seconds() / 3600
     min_h = _RECOVERY_MIN_HOURS.get(state.level, 4)
 
@@ -431,24 +416,23 @@ async def _manage_defense(
         market, current_bb_width, current_vol_avg, llm_ok,
     ):
         await exit_defense(market)
-        if chat_id:
-            await publish_telegram(
-                chat_id,
+        await publish_defense_request({
+            "type": "defense_alert",
+            "chat_id": chat_id,
+            "alert_text": (
                 f"✅ *방어 모드 해제*\n\n"
                 f"마켓: `{market}`\n"
                 f"현재가: `{price:,.0f}`\n"
-                f"정상 복귀 조건 충족",
-            )
+                f"정상 복귀 조건 충족"
+            ),
+        })
 
 
 # ── 메인 루프 ──
 
 
 async def shock_monitor(settings: Settings) -> None:
-    """뉴스 충격 감지 모니터 루프 (1분 주기).
-
-    유저별 포트폴리오를 DB에서 조회하여 감시.
-    """
+    """뉴스 충격 감지 모니터 루프 (1분 주기)."""
     interval = settings.shock_monitor_interval_sec
     logger.info("shock_monitor: started (interval=%.0fs)", interval)
 

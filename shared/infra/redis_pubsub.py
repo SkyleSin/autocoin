@@ -16,7 +16,6 @@ MASTER_CHANNEL = "send_master"
 EVENT_CHANNEL = "worker_events"
 
 
-ANALYSIS_CHANNEL = "analysis_ready"
 ADVISOR_CHANNEL = "advisor_request"
 
 
@@ -24,15 +23,6 @@ async def publish_event(event: dict[str, Any]) -> None:
     """ct-worker 이벤트를 Redis 채널로 발행 (다른 컨테이너가 구독)."""
     r = get_redis()
     await r.publish(EVENT_CHANNEL, json.dumps(event, ensure_ascii=False))
-
-
-async def publish_analysis_ready(market: str, timeframe: str) -> None:
-    """지표 스냅샷 저장 완료 → ct-strategy에 전략 평가 요청."""
-    r = get_redis()
-    await r.publish(
-        ANALYSIS_CHANNEL,
-        json.dumps({"market": market, "timeframe": timeframe}, ensure_ascii=False),
-    )
 
 
 async def publish_telegram(
@@ -111,6 +101,12 @@ async def publish_signal_alert(
     }
     r = get_redis()
     await r.publish(ADVISOR_CHANNEL, json.dumps(msg, ensure_ascii=False))
+
+
+async def publish_defense_request(data: dict[str, Any]) -> None:
+    """방어 시그널 → ct-advisor 채널로 발행 (safety/shock 판단 결과)."""
+    r = get_redis()
+    await r.publish(ADVISOR_CHANNEL, json.dumps(data, ensure_ascii=False))
 
 
 async def publish_to_telegram(msg: dict[str, Any]) -> None:

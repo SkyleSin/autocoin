@@ -13,7 +13,8 @@ from typing import Any
 from infra.api.portfolio import get_user_portfolio, shadow_execute
 from infra.api.user import get_active_users
 from infra.redis_client import get_redis
-from infra.redis_pubsub import publish_master, publish_to_telegram
+from infra.redis_pubsub import publish_master, publish_telegram, publish_to_telegram
+from infra.redis_queue import push_trade_job
 from utils.config import Settings
 
 from advisor.position_sizing import (
@@ -53,7 +54,15 @@ async def advisor_loop(settings: Settings) -> None:
 
             try:
                 data: dict[str, Any] = json.loads(msg["data"])
-                await _handle_signal(data, settings)
+                msg_type = data.get("type", "")
+                if msg_type in (
+                    "safety", "safety_llm_fail",
+                    "shock_sell", "shock_hold", "shock_llm_fail",
+                    "defense_sell", "defense_alert",
+                ):
+                    await _handle_defense(data, settings)
+                else:
+                    await _handle_signal(data, settings)
             except Exception:
                 logger.exception("advisor: 이벤트 처리 실패")
 
@@ -253,3 +262,138 @@ async def _shadow_auto_execute(
             logger.info("shadow 체결 스킵: %s %s", market, result.get("reason"))
     except Exception:
         logger.exception("shadow 자동체결 실패: %s", market)
+
+
+# ---------------------------------------------------------------------------
+# 방어 시그널 처리 (safety/shock에서 판단 결과 수신)
+# ---------------------------------------------------------------------------
+
+
+async def _execute_defense_sell(
+    user_id: int, market: str, volume: float, reason: str,
+) -> None:
+    """방어 매도 — Redis 매매 큐로 전송."""
+    await push_trade_job({
+        "type": "place_order",
+        "user_id": str(user_id),
+        "payload": {
+            "market": market,
+            "side": "ask",
+            "volume": str(volume),
+            "ord_type": "market",
+            "defense_reason": reason,
+        },
+    })
+    logger.info("defense sell: user=%d %s vol=%s (%s)", user_id, market, volume, reason)
+
+
+async def _handle_defense(data: dict[str, Any], settings: Settings) -> None:
+    """방어 시그널 처리 — 매도 실행 + 알림 발송만 담당.
+
+    상태 관리(enter/exit/save)는 ct-strategy에서 완료된 상태로 수신.
+    """
+    msg_type = data["type"]
+    chat_id = str(data.get("chat_id", ""))
+    market = data.get("market", "")
+
+    # LLM 실패 알림
+    if msg_type == "safety_llm_fail":
+        breach_pct = data.get("breach_pct", 0)
+        if chat_id:
+            await publish_telegram(
+                chat_id,
+                f"⚠️ `{market}` 지지선 이탈 감지 ({breach_pct:.1f}%)\n"
+                f"LLM 호출 실패 — 수동 확인 필요",
+            )
+        return
+
+    if msg_type == "shock_llm_fail":
+        shock_level = data.get("shock_level", "")
+        signals = data.get("triggered_signals", [])
+        if chat_id:
+            await publish_telegram(
+                chat_id,
+                f"⚡ `{market}` 충격 감지 ({shock_level})\n"
+                f"신호: {', '.join(signals)}\n"
+                f"LLM 호출 실패 — 수동 확인 필요",
+            )
+        return
+
+    # safety 판단 결과 → 매도 + 알림
+    if msg_type == "safety":
+        await _handle_safety_result(data, settings)
+        return
+
+    # shock HOLD 판단 → 알림만
+    if msg_type == "shock_hold":
+        if chat_id:
+            await publish_telegram(
+                chat_id,
+                f"⚡ *충격 감지 — HOLD 판단*\n\n"
+                f"마켓: `{market}` ({data.get('shock_level', '')})\n"
+                f"신호: {', '.join(data.get('triggered_signals', []))}\n"
+                f"현재가: `{data.get('current_price', 0):,.0f}`\n\n"
+                f"*LLM:* {data.get('llm_reason', '')}\n"
+                f"확신도: {data.get('llm_confidence', 0):.0%}",
+            )
+        return
+
+    # shock 매도 / 손절 매도 → 매도 실행 + 알림
+    if msg_type in ("shock_sell", "defense_sell"):
+        user_id = data.get("user_id")
+        sell_volume = data.get("sell_volume", 0)
+        sell_reason = data.get("sell_reason", "")
+        alert_text = data.get("alert_text", "")
+
+        if user_id and sell_volume > 0:
+            await _execute_defense_sell(user_id, market, sell_volume, sell_reason)
+
+        if chat_id and alert_text:
+            await publish_telegram(chat_id, alert_text)
+        return
+
+    # 방어모드 해제 등 알림만
+    if msg_type == "defense_alert":
+        alert_text = data.get("alert_text", "")
+        if chat_id and alert_text:
+            await publish_telegram(chat_id, alert_text)
+        return
+
+
+async def _handle_safety_result(data: dict[str, Any], settings: Settings) -> None:
+    """safety 판단 결과 처리 — 긴급 매도 또는 경고."""
+    user_id = data["user_id"]
+    chat_id = str(data.get("chat_id", ""))
+    market = data["market"]
+    balance = data["balance"]
+    price = data["current_price"]
+    support = data["support_level"]
+    breach_pct = data["breach_pct"]
+    decision = data["llm_decision"]
+    reason = data["llm_reason"]
+    confidence = data["llm_confidence"]
+
+    if decision == "SELL":
+        await _execute_defense_sell(user_id, market, balance, "긴급 매도 (지지선 이탈)")
+        if chat_id:
+            await publish_telegram(
+                chat_id,
+                f"🔴 *긴급 매도 실행*\n\n"
+                f"마켓: `{market}`\n"
+                f"현재가: `{price:,.0f}`\n"
+                f"지지선: `{support:,.0f}` (이탈 {breach_pct:.1f}%)\n"
+                f"매도 수량: `{balance}`\n\n"
+                f"*LLM 판단:* {reason}\n"
+                f"확신도: {confidence:.0%}",
+            )
+    else:
+        if chat_id:
+            await publish_telegram(
+                chat_id,
+                f"⚠️ *지지선 이탈 감지*\n\n"
+                f"마켓: `{market}`\n"
+                f"현재가: `{price:,.0f}`\n"
+                f"지지선: `{support:,.0f}` (이탈 {breach_pct:.1f}%)\n\n"
+                f"*LLM 판단: 유지*\n{reason}\n"
+                f"확신도: {confidence:.0%}",
+            )

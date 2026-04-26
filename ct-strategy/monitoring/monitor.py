@@ -1,4 +1,7 @@
-"""긴급 매도 안전장치 — 지지선 이탈 감시 (1분 주기)."""
+"""긴급 매도 안전장치 — 지지선 이탈 감시 (1분 주기).
+
+판단만 수행하고, 실행(매도/알림)은 advisor_request로 위임한다.
+"""
 
 from __future__ import annotations
 
@@ -11,11 +14,10 @@ from infra.api.signal import get_latest_signal
 from infra.api.tracked_asset import get_active_markets, update_market_prices
 from infra.api.user import get_active_users
 from infra.redis_client import get_redis
-from infra.redis_pubsub import publish_telegram
-from infra.redis_queue import push_trade_job
+from infra.redis_pubsub import publish_defense_request
 from utils.config import Settings
 
-from safety.llm.emergency_prompt import build_emergency_prompt
+from monitoring.llm.emergency_prompt import build_emergency_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +82,7 @@ async def _call_emergency_llm(
 
     if settings.deepseek_api_key:
         try:
-            from safety.llm.deepseek_llm import query_deepseek
+            from monitoring.llm.deepseek_llm import query_deepseek
             result = await query_deepseek(
                 prompt,
                 api_key=settings.deepseek_api_key,
@@ -92,7 +94,7 @@ async def _call_emergency_llm(
             logger.warning("긴급판단: DeepSeek 실패, Ollama 폴백", exc_info=True)
 
     if result is None:
-        from safety.llm.local_llm import query_ollama
+        from monitoring.llm.local_llm import query_ollama
         result = await query_ollama(
             prompt,
             base_url=settings.ollama_base_url,
@@ -104,25 +106,6 @@ async def _call_emergency_llm(
     return result
 
 
-async def _execute_emergency_sell(
-    user_id: int,
-    market: str,
-    balance: float,
-) -> None:
-    """긴급 시장가 매도 — Redis 매매 큐로 전송."""
-    await push_trade_job({
-        "type": "place_order",
-        "user_id": str(user_id),
-        "payload": {
-            "market": market,
-            "side": "ask",
-            "volume": str(balance),
-            "ord_type": "market",
-        },
-    })
-    logger.info("긴급 매도 Redis push: user=%d %s vol=%s", user_id, market, balance)
-
-
 async def _check_single_asset(
     settings: Settings,
     user_id: int,
@@ -130,7 +113,7 @@ async def _check_single_asset(
     currency: str,
     balance: float,
 ) -> None:
-    """단일 보유 자산의 지지선 이탈 확인."""
+    """단일 보유 자산의 지지선 이탈 확인 → 판단 결과를 advisor_request로 위임."""
     market = f"KRW-{currency}"
 
     # 현재가 조회
@@ -206,38 +189,30 @@ async def _check_single_asset(
         llm_result = await _call_emergency_llm(settings, prompt)
     except Exception:
         logger.exception("safety: %s LLM 호출 실패 — 매도 보류", market)
-        if chat_id:
-            await publish_telegram(
-                chat_id,
-                f"⚠️ `{market}` 지지선 이탈 감지 ({breach_pct:.1f}%)\n"
-                f"LLM 호출 실패 — 수동 확인 필요",
-            )
+        await publish_defense_request({
+            "type": "safety_llm_fail",
+            "user_id": user_id,
+            "chat_id": chat_id,
+            "market": market,
+            "breach_pct": breach_pct,
+        })
         return
 
-    if llm_result.decision == "SELL":
-        await _execute_emergency_sell(user_id, market, balance)
-        if chat_id:
-            await publish_telegram(
-                chat_id,
-                f"🔴 *긴급 매도 실행*\n\n"
-                f"마켓: `{market}`\n"
-                f"현재가: `{price:,.0f}`\n"
-                f"지지선: `{support:,.0f}` (이탈 {breach_pct:.1f}%)\n"
-                f"매도 수량: `{balance}`\n\n"
-                f"*LLM 판단:* {llm_result.reason}\n"
-                f"확신도: {llm_result.confidence:.0%}",
-            )
-    else:
-        if chat_id:
-            await publish_telegram(
-                chat_id,
-                f"⚠️ *지지선 이탈 감지*\n\n"
-                f"마켓: `{market}`\n"
-                f"현재가: `{price:,.0f}`\n"
-                f"지지선: `{support:,.0f}` (이탈 {breach_pct:.1f}%)\n\n"
-                f"*LLM 판단: 유지*\n{llm_result.reason}\n"
-                f"확신도: {llm_result.confidence:.0%}",
-            )
+    # 판단 결과를 advisor_request로 위임
+    await publish_defense_request({
+        "type": "safety",
+        "user_id": user_id,
+        "chat_id": chat_id,
+        "market": market,
+        "currency": currency,
+        "balance": balance,
+        "current_price": price,
+        "support_level": support,
+        "breach_pct": breach_pct,
+        "llm_decision": llm_result.decision,
+        "llm_reason": llm_result.reason,
+        "llm_confidence": llm_result.confidence,
+    })
 
 
 async def _update_tracked_prices(settings: Settings) -> None:
@@ -253,23 +228,19 @@ async def _update_tracked_prices(settings: Settings) -> None:
         ]
         if items:
             await update_market_prices(items)
-            logger.debug("현재가 갱��: %d종목", len(items))
+            logger.debug("현재가 갱신: %d종목", len(items))
     except Exception:
         logger.warning("현재가 갱신 실패", exc_info=True)
 
 
 async def safety_monitor(settings: Settings) -> None:
-    """보유 코인 지지선 이탈 감시 루프 (1분 주기).
-
-    유저별 포트폴리오를 DB에서 조회하여 감시.
-    """
+    """보유 코인 지지선 이탈 감시 루프 (1분 주기)."""
     interval = settings.safety_monitor_interval_sec
     logger.info("safety_monitor: started (interval=%.0fs)", interval)
 
     try:
         while True:
             try:
-                # 활성 종목 현재가 일괄 갱신
                 await _update_tracked_prices(settings)
 
                 users = await get_active_users()

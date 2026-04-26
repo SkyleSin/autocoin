@@ -10,7 +10,6 @@ import logging
 from dataclasses import dataclass
 
 import pandas as pd
-
 from infra.api.candle import get_candles
 
 logger = logging.getLogger(__name__)
