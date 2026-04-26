@@ -99,7 +99,6 @@ services:
       API_BASE_URL: http://ct-api:8000
       REDIS_URL: redis://ct-redis:6379/0
       ENCRYPT_KEY: ${ENCRYPT_KEY}
-      BITHUMB_BASE_URL: ${BITHUMB_BASE_URL:-https://api.bithumb.com}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
     env_file:

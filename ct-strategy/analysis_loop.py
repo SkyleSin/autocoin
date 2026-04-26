@@ -14,23 +14,9 @@ from analysis.support_resistance import analyze as analyze_sr
 from infra.api.candle import get_candles
 from infra.api.indicator_snapshot import upsert_indicator_snapshot
 from infra.api.tracked_asset import get_active_markets
-from utils.config import Settings
+from utils.config import TF_PERIODS, Settings
 
 logger = logging.getLogger(__name__)
-
-# 분석 대상 타임프레임 → 분 단위 주기
-TF_PERIODS: dict[str, int] = {
-    "15m": 15,
-    "1h": 60,
-    "4h": 240,
-    "1d": 1440,
-}
-
-
-def _tf_bucket(now: datetime, period_min: int) -> int:
-    """현재 시각이 속한 TF 버킷 인덱스 — 버킷이 바뀌면 경계 통과."""
-    epoch_min = int(now.timestamp()) // 60
-    return epoch_min // period_min
 
 
 # ---------------------------------------------------------------------------
@@ -49,7 +35,7 @@ async def _analyze_market(
     if not candles:
         return None
 
-    latest_open_at = candles[0].get("open_at") or candles[0].get("opened_at")
+    latest_open_at = candles[0].get("open_at")
     if latest_open_at == last_open_at:
         return None  # 새 봉 없음 → 분석 스킵
 
@@ -66,7 +52,7 @@ async def _analyze_market(
     snap = compute_all(closes, volumes)
     if snap is None:
         logger.debug("지표 계산 불가 (데이터 부족): %s %s", market, timeframe)
-        return latest_open_at
+        return None  # 재시도 가능하도록 None 반환
 
     # S/R 분석
     try:

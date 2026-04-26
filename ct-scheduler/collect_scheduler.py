@@ -18,20 +18,12 @@ from infra.api.trade import get_trades
 from infra.api.user import get_active_users
 from infra.redis_pubsub import publish_master, publish_telegram
 from infra.redis_queue import push_trade_job
-from utils.config import Settings
+from utils.config import TF_PERIODS, Settings
 
 logger = logging.getLogger(__name__)
 
 KST = timezone(timedelta(hours=9))
 REPORT_HOURS_KST = [9, 21]
-
-# 봉 수집 대상 타임프레임 → 분 단위 주기
-TF_PERIODS: dict[str, int] = {
-    "15m": 15,
-    "1h": 60,
-    "4h": 240,
-    "1d": 1440,
-}
 
 
 # ---------------------------------------------------------------------------
@@ -142,6 +134,16 @@ async def _trigger_collect(markets: list[str], timeframe: str) -> None:
     logger.info("candle trigger: %s × %d markets → Redis", timeframe, len(markets))
 
 
+async def _trigger_cache_1m(markets: list[str]) -> None:
+    """ct-worker에 1분봉 Redis 캐시 Job 전달."""
+    for market in markets:
+        await push_trade_job({
+            "type": "cache_candles_1m",
+            "payload": {"market": market},
+        })
+    logger.debug("1m cache trigger: %d markets → Redis", len(markets))
+
+
 async def _trigger_portfolio_sync() -> None:
     """활성 유저별 포트폴리오 동기화 Job → ct-worker."""
     try:
@@ -238,6 +240,7 @@ async def collect_scheduler(settings: Settings) -> None:
     logger.info("collect_scheduler: 시작")
 
     last_bucket: dict[str, int] = {}
+    last_1m_bucket: int = -1
     next_daily = _next_kst_target(0, 5)
     next_report = _next_report_target()
 
@@ -252,6 +255,16 @@ async def collect_scheduler(settings: Settings) -> None:
             except Exception:
                 logger.exception("collect: 마켓 조회 실패")
                 markets = []
+
+            # 1분봉 캐시 트리거 (1분마다, 지연 없이 즉시)
+            cur_1m = _tf_bucket(tick_start, 1)
+            if last_1m_bucket != cur_1m:
+                last_1m_bucket = cur_1m
+                if markets:
+                    try:
+                        await _trigger_cache_1m(markets)
+                    except Exception:
+                        logger.exception("1m cache trigger 실패")
 
             # TF 경계 확인 → 봉 수집 트리거 (1분 지연: 봉 마감 확정 대기)
             delayed = tick_start - timedelta(minutes=1)

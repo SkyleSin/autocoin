@@ -15,6 +15,15 @@ def project_root() -> Path:
     return Path.cwd()
 
 
+# 봉 수집/분석 대상 타임프레임 → 분 단위 주기 (상위 TF 우선)
+TF_PERIODS: dict[str, int] = {
+    "1d": 1440,
+    "4h": 240,
+    "1h": 60,
+    "15m": 15,
+}
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",

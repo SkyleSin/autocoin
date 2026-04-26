@@ -13,6 +13,7 @@ from infra.api.portfolio import get_user_portfolio
 from infra.api.signal import get_latest_signal
 from infra.api.tracked_asset import get_active_markets, update_market_prices
 from infra.api.user import get_active_users
+from infra.redis_candle import get_current_price, get_current_prices
 from infra.redis_client import get_redis
 from infra.redis_pubsub import publish_defense_request
 from utils.config import Settings
@@ -20,37 +21,6 @@ from utils.config import Settings
 from monitoring.llm.emergency_prompt import build_emergency_prompt
 
 logger = logging.getLogger(__name__)
-
-
-def _get_ticker_sync(settings: Settings, market: str) -> float:
-    import httpx
-
-    url = f"{settings.bithumb_base_url}/v1/ticker"
-    params = {"markets": market}
-    resp = httpx.get(url, params=params, timeout=10)
-    resp.raise_for_status()
-    data = resp.json()
-    if data and isinstance(data, list):
-        return float(data[0].get("trade_price", 0))
-    return 0.0
-
-
-def _get_tickers_sync(settings: Settings, markets: list[str]) -> dict[str, float]:
-    """여러 마켓 현재가 일괄 조회."""
-    import httpx
-
-    if not markets:
-        return {}
-    url = f"{settings.bithumb_base_url}/v1/ticker"
-    params = {"markets": ",".join(markets)}
-    resp = httpx.get(url, params=params, timeout=15)
-    resp.raise_for_status()
-    data = resp.json()
-    return {
-        item["market"]: float(item.get("trade_price", 0))
-        for item in data
-        if isinstance(item, dict)
-    }
 
 
 async def _get_nearest_support(
@@ -116,12 +86,8 @@ async def _check_single_asset(
     """단일 보유 자산의 지지선 이탈 확인 → 판단 결과를 advisor_request로 위임."""
     market = f"KRW-{currency}"
 
-    # 현재가 조회
-    try:
-        price = await asyncio.to_thread(_get_ticker_sync, settings, market)
-    except Exception:
-        logger.debug("safety: %s 현재가 조회 실패", market)
-        return
+    # 현재가 조회 (Redis 캐시)
+    price = await get_current_price(market)
 
     if price <= 0:
         return
@@ -215,14 +181,14 @@ async def _check_single_asset(
     })
 
 
-async def _update_tracked_prices(settings: Settings) -> None:
-    """활성 추적 종목의 현재가를 빗썸에서 조회하여 DB 갱신."""
+async def _update_tracked_prices() -> None:
+    """활성 추적 종목의 현재가를 Redis 캐시에서 조회하여 DB 갱신."""
     try:
         assets = await get_active_markets()
         markets = [a["market"] for a in assets if a.get("market")]
         if not markets:
             return
-        prices = await asyncio.to_thread(_get_tickers_sync, settings, markets)
+        prices = await get_current_prices(markets)
         items = [
             {"market": m, "price": p} for m, p in prices.items() if p > 0
         ]
@@ -241,7 +207,7 @@ async def safety_monitor(settings: Settings) -> None:
     try:
         while True:
             try:
-                await _update_tracked_prices(settings)
+                await _update_tracked_prices()
 
                 users = await get_active_users()
                 for user in users:

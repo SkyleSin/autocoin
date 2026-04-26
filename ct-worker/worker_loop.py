@@ -7,7 +7,7 @@ import json
 import logging
 
 from handlers.account import handle_check_balance, handle_get_balance
-from handlers.candle import handle_collect_candles
+from handlers.candle import handle_cache_candles_1m, handle_collect_candles
 from handlers.market import handle_get_markets, handle_get_ticker
 from handlers.market_sync import handle_sync_markets
 from handlers.order import handle_cancel_order, handle_check_order, handle_place_order
@@ -50,6 +50,8 @@ async def trade_worker(settings: Settings, shutdown: asyncio.Event, name: str) -
 
             if job_type == "collect_candles":
                 await handle_collect_candles(payload, user_settings)
+            elif job_type == "cache_candles_1m":
+                await handle_cache_candles_1m(payload, user_settings)
             elif job_type == "check_balance":
                 result = await handle_check_balance(payload, user_settings)
             elif job_type == "get_balance":

@@ -15,6 +15,7 @@ from infra.api.indicator_snapshot import get_latest_snapshot
 from infra.api.portfolio import get_user_portfolio
 from infra.api.signal import get_latest_signal
 from infra.api.user import get_active_users
+from infra.redis_candle import get_candles_1m, get_current_price
 from infra.redis_client import get_redis
 from infra.redis_pubsub import publish_defense_request
 from utils.config import Settings
@@ -47,20 +48,6 @@ logger = logging.getLogger(__name__)
 
 
 # ── 데이터 조회 헬퍼 ──
-
-
-def _get_candles_1m_sync(settings: Settings, market: str, count: int = 30) -> list:
-    """빗썸 1분봉 최근 N개 조회 (동기)."""
-    import httpx
-
-    url = f"{settings.bithumb_base_url}/v1/candles/minutes/1"
-    params = {"market": market, "count": count}
-    resp = httpx.get(url, params=params, timeout=10)
-    resp.raise_for_status()
-    data = resp.json()
-    if isinstance(data, list):
-        return list(reversed(data))  # 시간순 정렬
-    return []
 
 
 async def _get_indicator_snapshot(
@@ -153,15 +140,8 @@ async def _detect_and_handle_shock(
     if await r.exists(f"shock_cooldown:{market}"):
         return
 
-    # 1분봉 조회
-    try:
-        candles_1m = await asyncio.to_thread(
-            _get_candles_1m_sync, settings, market, 30,
-        )
-    except Exception:
-        logger.debug("shock: %s 1분봉 조회 실패", market)
-        return
-
+    # 1분봉 조회 (Redis 캐시)
+    candles_1m = await get_candles_1m(market)
     if len(candles_1m) < 5:
         return
 
@@ -324,14 +304,8 @@ async def _manage_defense(
     if state is None:
         return
 
-    # 현재가 조회 (1분봉에서 최신가)
-    try:
-        candles_1m = await asyncio.to_thread(
-            _get_candles_1m_sync, settings, market, 1,
-        )
-        price = float(candles_1m[-1].get("trade_price", 0)) if candles_1m else 0.0
-    except Exception:
-        return
+    # 현재가 조회 (Redis 캐시)
+    price = await get_current_price(market)
 
     if price <= 0:
         return
