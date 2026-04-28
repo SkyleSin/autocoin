@@ -5,16 +5,14 @@ advisor_request 수신 → portfolio/risk 조회 → 포지셔닝 → ct-telegra
 
 from __future__ import annotations
 
-import asyncio
-import json
 import logging
 from typing import Any
 
 from infra.api.portfolio import get_user_portfolio, shadow_execute
 from infra.api.user import get_active_users
-from infra.redis_client import get_redis
 from infra.redis_pubsub import publish_master, publish_telegram, publish_to_telegram
 from infra.redis_queue import push_trade_job
+from infra.redis_stream import STREAM_ADVISOR, stream_consume
 from utils.config import Settings
 
 from advisor.position_sizing import (
@@ -24,7 +22,7 @@ from advisor.position_sizing import (
 
 logger = logging.getLogger(__name__)
 
-ADVISOR_REQUEST = "advisor_request"
+_GROUP = "advisor-group"
 
 # risk_settings 기본값
 _DEFAULT_RISK = {
@@ -35,43 +33,20 @@ _DEFAULT_RISK = {
 
 
 async def advisor_loop(settings: Settings) -> None:
-    """Redis 구독 루프 — advisor_request 채널."""
-    r = get_redis()
-    pubsub = r.pubsub()
-    await pubsub.subscribe(ADVISOR_REQUEST)
-    logger.info("advisor_loop: 시작 (channel: %s)", ADVISOR_REQUEST)
+    """Redis Streams 소비 루프 — advisor_request."""
 
-    try:
-        while True:
-            msg = await pubsub.get_message(
-                ignore_subscribe_messages=True, timeout=1.0,
-            )
-            if msg is None:
-                await asyncio.sleep(0.1)
-                continue
-            if msg["type"] != "message":
-                continue
+    async def handler(data: dict[str, Any]) -> None:
+        msg_type = data.get("type", "")
+        if msg_type in (
+            "safety", "safety_llm_fail",
+            "shock_sell", "shock_hold", "shock_llm_fail",
+            "defense_sell", "defense_alert",
+        ):
+            await _handle_defense(data, settings)
+        else:
+            await _handle_signal(data, settings)
 
-            try:
-                data: dict[str, Any] = json.loads(msg["data"])
-                msg_type = data.get("type", "")
-                if msg_type in (
-                    "safety", "safety_llm_fail",
-                    "shock_sell", "shock_hold", "shock_llm_fail",
-                    "defense_sell", "defense_alert",
-                ):
-                    await _handle_defense(data, settings)
-                else:
-                    await _handle_signal(data, settings)
-            except Exception:
-                logger.exception("advisor: 이벤트 처리 실패")
-
-    except asyncio.CancelledError:
-        pass
-    finally:
-        await pubsub.unsubscribe(ADVISOR_REQUEST)
-        await pubsub.aclose()
-        logger.info("advisor_loop: 종료")
+    await stream_consume(STREAM_ADVISOR, _GROUP, "advisor-1", handler)
 
 
 async def _handle_signal(data: dict[str, Any], settings: Settings) -> None:
