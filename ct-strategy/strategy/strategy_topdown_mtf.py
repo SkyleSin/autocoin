@@ -96,6 +96,15 @@ class StrategyTopdownMTF(BaseStrategy):
 
         all_reasons.append(f"[15m] 트리거 충족: {', '.join(fired_15m)}")
 
+        # 거래량 필터 — 15m 거래량 비율이 최소 기준 미달 시 HOLD
+        _VOL_MIN_RATIO = 0.2
+        vol_ratio = (extra_15m.get("indicators") or {}).get("volume_ratio")
+        if vol_ratio is not None and vol_ratio < _VOL_MIN_RATIO:
+            all_reasons.append(
+                f"[15m] 거래량 부족 (vol_ratio={vol_ratio:.2f} < {_VOL_MIN_RATIO})"
+            )
+            return _make_hold("15m 거래량 부족", layers, all_reasons)
+
         # SR 방향 충돌 체크 — 지지 이탈+매수, 저항 거부+매수 등 논리적 모순 차단
         _SR_CONFLICT = {
             "BUY": {"SUPPORT_BREAK", "RESISTANCE_REJECT"},

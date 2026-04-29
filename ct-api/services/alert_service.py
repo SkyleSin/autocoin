@@ -107,9 +107,9 @@ async def check_alert_preview(
     if existing is None:
         return AlertAction.NEW
 
-    # 매매 실행 완료 + 동일 시그널 → SKIP
+    # 매매 실행 완료 + 동일 시그널 → CHANGED 가능성 있으므로 본 함수에 위임
     if existing.acted_at is not None and existing.signal_type == signal_type:
-        return AlertAction.SKIP
+        return AlertAction.CHANGED
 
     # 시그널 변경 → 쿨다운 확인
     now = datetime.now(UTC)
@@ -178,10 +178,24 @@ async def check_alert(
         logger.info("alert new: %s %s %s", market, timeframe, signal_type)
         return AlertAction.NEW
 
-    # 매매 실행 완료 → 동일 시그널이면 무시, 반대 시그널이면 해제 후 진행
+    # 매매 실행 완료 → 동일 시그널은 조건 변경 시만 재발행, 반대 시그널은 해제 후 진행
     if existing.acted_at is not None:
         if existing.signal_type == signal_type:
-            return AlertAction.SKIP
+            # SR 변경 또는 confidence 유의미 상승 → 재발행
+            old_fp = _pass_fingerprint(existing.indicators, existing.confidence)
+            new_fp = _pass_fingerprint(indicators, confidence)
+            if not _should_clear_pass(old_fp, new_fp):
+                return AlertAction.SKIP
+            existing.acted_at = None
+            existing.confidence = confidence
+            existing.reasons = json.dumps(reasons, ensure_ascii=False)
+            existing.indicators = indicators
+            existing.last_alerted_at = now
+            logger.info(
+                "alert acted cleared (sr/conf changed): %s %s %s",
+                market, timeframe, signal_type,
+            )
+            return AlertAction.CHANGED
         # 반대 시그널 → acted_at 해제하고 CHANGED 흐름으로
         existing.acted_at = None
         logger.info(

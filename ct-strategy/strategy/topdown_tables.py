@@ -18,8 +18,6 @@ from .topdown_indicators_bb import (
     chk_bb_expansion,
     chk_bb_lower_break,
     chk_bb_squeeze,
-    chk_rsi_gt50,
-    chk_rsi_gt55,
     chk_rsi_gt60,
     chk_rsi_lt40,
     chk_rsi_lt45,
@@ -87,8 +85,6 @@ TRIGGER_BUY_15M_OPTIONAL = [
 
 TRIGGER_SELL_15M_REQUIRED = [chk_macd_hist_falling]
 TRIGGER_SELL_15M_OPTIONAL = [
-    chk_rsi_gt50,
-    chk_rsi_gt55,
     chk_rsi_gt60,
 ]
 
