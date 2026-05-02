@@ -226,6 +226,21 @@ async def _send_scheduled_reports(settings: Settings) -> None:
 
 
 # ---------------------------------------------------------------------------
+# 방어 실행 헬퍼
+# ---------------------------------------------------------------------------
+
+async def _safe(coro, label: str) -> bool:
+    """코루틴 실행 + 로깅. 성공 True, 실패 False (루프 중단 방지)."""
+    try:
+        await coro
+        logger.info("%s 완료", label)
+        return True
+    except Exception:
+        logger.exception("%s 실패", label)
+        return False
+
+
+# ---------------------------------------------------------------------------
 # 메인 루프
 # ---------------------------------------------------------------------------
 
@@ -261,10 +276,7 @@ async def collect_scheduler(settings: Settings) -> None:
             if last_1m_bucket != cur_1m:
                 last_1m_bucket = cur_1m
                 if markets:
-                    try:
-                        await _trigger_cache_1m(markets)
-                    except Exception:
-                        logger.exception("1m cache trigger 실패")
+                    await _safe(_trigger_cache_1m(markets), "1m cache trigger")
 
             # TF 경계 확인 → 봉 수집 트리거 (1분 지연: 봉 마감 확정 대기)
             delayed = tick_start - timedelta(minutes=1)
@@ -273,36 +285,30 @@ async def collect_scheduler(settings: Settings) -> None:
                 if last_bucket.get(tf) != bucket:
                     last_bucket[tf] = bucket
                     if markets:
-                        try:
-                            await _trigger_collect(markets, tf)
-                        except Exception:
-                            logger.exception("candle trigger 실패: %s", tf)
-
+                        await _safe(
+                            _trigger_collect(markets, tf), f"candle trigger: {tf}"
+                        )
                     # 15m 경계 → 포트폴리오 동기화 (전략 평가 전 잔고 갱신)
                     if tf == "15m":
-                        try:
-                            await _trigger_portfolio_sync()
-                        except Exception:
-                            logger.exception("portfolio sync trigger 실패")
+                        await _safe(
+                            _trigger_portfolio_sync(), "portfolio sync trigger"
+                        )
 
             # 일별 태스크
             now = datetime.now(UTC)
             if now >= next_daily:
-                try:
-                    await cleanup_jobs(complete_days=3, error_days=7)
-                    logger.info("collect/daily: job cleanup 완료")
-                except Exception:
-                    logger.exception("collect/daily: job cleanup 실패")
-                try:
-                    await cleanup_hold_signals(days=7)
-                    logger.info("collect/daily: HOLD 시그널 정리 완료")
-                except Exception:
-                    logger.exception("collect/daily: HOLD 시그널 정리 실패")
-                try:
-                    await push_worker_job({"type": "sync_markets", "payload": {}})
-                    logger.info("collect/daily: 마켓 동기화 트리거")
-                except Exception:
-                    logger.exception("collect/daily: 마켓 동기화 트리거 실패")
+                await _safe(
+                    cleanup_jobs(complete_days=3, error_days=7),
+                    "collect/daily: job cleanup",
+                )
+                await _safe(
+                    cleanup_hold_signals(days=7),
+                    "collect/daily: HOLD 시그널 정리",
+                )
+                await _safe(
+                    push_worker_job({"type": "sync_markets", "payload": {}}),
+                    "collect/daily: 마켓 동기화 트리거",
+                )
                 next_daily = _next_kst_target(0, 5)
 
             # 리포트 발송
