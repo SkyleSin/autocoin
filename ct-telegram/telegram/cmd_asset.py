@@ -6,7 +6,7 @@ import logging
 
 from infra.api.tracked_asset import add_tracked_asset, get_active_markets
 from infra.api.user import get_user_watchlist, update_user_watchlist
-from infra.redis_queue import push_trade_job
+from infra.redis_queue import push_worker_job
 
 from telegram.bot import send_message
 
@@ -55,7 +55,7 @@ async def cmd_add_asset(token: str, chat_id: str, user_id: int, market: str) -> 
         # 백필
         try:
             for tf in _BACKFILL_TFS:
-                await push_trade_job({
+                await push_worker_job({
                     "type": "collect_candles",
                     "payload": {"market": market, "timeframe": tf},
                 })

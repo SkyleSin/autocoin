@@ -11,7 +11,7 @@ from typing import Any
 from infra.api.portfolio import get_user_portfolio, shadow_execute
 from infra.api.user import get_active_users
 from infra.redis_pubsub import publish_master, publish_telegram, publish_to_telegram
-from infra.redis_queue import push_trade_job
+from infra.redis_queue import push_worker_job
 from infra.redis_stream import STREAM_ADVISOR, stream_consume
 from utils.config import Settings
 
@@ -248,7 +248,7 @@ async def _execute_defense_sell(
     user_id: int, market: str, volume: float, reason: str,
 ) -> None:
     """방어 매도 — Redis 매매 큐로 전송."""
-    await push_trade_job({
+    await push_worker_job({
         "type": "place_order",
         "user_id": str(user_id),
         "payload": {

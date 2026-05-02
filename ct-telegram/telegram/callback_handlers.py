@@ -9,7 +9,7 @@ from infra.api.active_alert import mark_alert_acted, mark_alert_passed
 from infra.api.portfolio import get_user_portfolio
 from infra.api.user import get_active_users
 from infra.redis_client import get_redis
-from infra.redis_queue import push_trade_job
+from infra.redis_queue import push_worker_job
 from utils.config import Settings
 
 from telegram.bot import answer_callback, send_message
@@ -82,7 +82,7 @@ async def _handle_trade_execute(
         await send_message(token, chat_id, "⚠️ 유저 정보를 찾을 수 없습니다.")
         return
 
-    await push_trade_job({
+    await push_worker_job({
         "type": "place_order",
         "user_id": str(user_id),
         "payload": {
@@ -120,7 +120,7 @@ async def _handle_trade_sell(
         return
 
     sell_volume = coin_balance * pct / 100
-    await push_trade_job({
+    await push_worker_job({
         "type": "place_order",
         "user_id": str(user_id),
         "payload": {

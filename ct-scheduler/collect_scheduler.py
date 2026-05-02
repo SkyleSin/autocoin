@@ -17,7 +17,7 @@ from infra.api.tracked_asset import get_active_markets
 from infra.api.trade import get_trades
 from infra.api.user import get_active_users
 from infra.redis_pubsub import publish_master, publish_telegram
-from infra.redis_queue import push_trade_job
+from infra.redis_queue import push_worker_job
 from utils.config import TF_PERIODS, Settings
 
 logger = logging.getLogger(__name__)
@@ -127,7 +127,7 @@ def _next_report_target() -> datetime:
 async def _trigger_collect(markets: list[str], timeframe: str) -> None:
     """ct-worker에 캔들 수집 Job 전달."""
     for market in markets:
-        await push_trade_job({
+        await push_worker_job({
             "type": "collect_candles",
             "payload": {"market": market, "timeframe": timeframe},
         })
@@ -137,7 +137,7 @@ async def _trigger_collect(markets: list[str], timeframe: str) -> None:
 async def _trigger_cache_1m(markets: list[str]) -> None:
     """ct-worker에 1분봉 Redis 캐시 Job 전달."""
     for market in markets:
-        await push_trade_job({
+        await push_worker_job({
             "type": "cache_candles_1m",
             "payload": {"market": market},
         })
@@ -158,7 +158,7 @@ async def _trigger_portfolio_sync() -> None:
             continue
         if user.get("is_shadow"):
             continue
-        await push_trade_job({
+        await push_worker_job({
             "type": "sync_portfolio",
             "user_id": str(user_id),
             "payload": {"user_id": user_id},
@@ -299,7 +299,7 @@ async def collect_scheduler(settings: Settings) -> None:
                 except Exception:
                     logger.exception("collect/daily: HOLD 시그널 정리 실패")
                 try:
-                    await push_trade_job({"type": "sync_markets", "payload": {}})
+                    await push_worker_job({"type": "sync_markets", "payload": {}})
                     logger.info("collect/daily: 마켓 동기화 트리거")
                 except Exception:
                     logger.exception("collect/daily: 마켓 동기화 트리거 실패")

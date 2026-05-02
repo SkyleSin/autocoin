@@ -14,7 +14,7 @@ from handlers.order import handle_cancel_order, handle_check_order, handle_place
 from handlers.portfolio import handle_sync_portfolio
 from infra.api.user import get_user_full
 from infra.redis_client import get_redis
-from infra.redis_queue import poll_delayed_jobs, pop_trade_job, push_trade_job
+from infra.redis_queue import poll_delayed_jobs, pop_worker_job, push_worker_job
 from infra.redis_rate_limit import wait_for_rate_limit
 from utils.config import Settings
 from utils.user_utils import get_user_settings_from_dict
@@ -26,7 +26,7 @@ async def trade_worker(settings: Settings, shutdown: asyncio.Event, name: str) -
     """Redis 큐에서 Job pop → 타입별 핸들러 실행."""
     log = logging.getLogger(name)
     while not shutdown.is_set():
-        job_data = await pop_trade_job(timeout=2)
+        job_data = await pop_worker_job(timeout=2)
         if job_data is None:
             continue
 
@@ -87,12 +87,12 @@ async def trade_worker(settings: Settings, shutdown: asyncio.Event, name: str) -
 
 
 async def delayed_job_poller(shutdown: asyncio.Event) -> None:
-    """지연 큐에서 실행 시각 도달한 Job을 trade_jobs로 이동."""
+    """지연 큐에서 실행 시각 도달한 Job을 worker_jobs로 이동."""
     while not shutdown.is_set():
         try:
             jobs = await poll_delayed_jobs()
             for job_data in jobs:
-                await push_trade_job(job_data)
+                await push_worker_job(job_data)
         except Exception:
             logger.exception("delayed_job_poller 오류")
         await asyncio.sleep(1)
