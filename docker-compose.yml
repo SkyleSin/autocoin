@@ -81,7 +81,7 @@ services:
       - ./shared:/src/shared:ro
       - ./ct-scheduler:/src/ct-scheduler:ro
       - ./log_v2:/app/log
-    command: python scheduler.py
+    command: python main.py
     depends_on:
       ct-api:
         condition: service_started
@@ -110,7 +110,7 @@ services:
       - ./shared:/src/shared:ro
       - ./ct-strategy:/src/ct-strategy:ro
       - ./log_v2:/app/log
-    command: python strategy.py
+    command: python main.py
     depends_on:
       ct-api:
         condition: service_started
@@ -135,7 +135,7 @@ services:
       - ./shared:/src/shared:ro
       - ./ct-advisor:/src/ct-advisor:ro
       - ./log_v2:/app/log
-    command: python advisor_main.py
+    command: python main.py
     depends_on:
       ct-api:
         condition: service_started

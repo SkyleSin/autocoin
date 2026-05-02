@@ -4,4 +4,4 @@ FROM autocoin-base:latest
 COPY shared/ ./
 COPY ct-advisor/ ./
 
-CMD ["python", "advisor_main.py"]
+CMD ["python", "main.py"]

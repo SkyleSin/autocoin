@@ -4,4 +4,4 @@ FROM autocoin-base:latest
 COPY shared/ ./
 COPY ct-scheduler/ ./
 
-CMD ["python", "scheduler.py"]
+CMD ["python", "main.py"]

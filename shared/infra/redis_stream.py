@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 STREAM_TELEGRAM = "stream:send_message"
 STREAM_MASTER = "stream:send_master"
 STREAM_ADVISOR = "stream:advisor_request"
+STREAM_CANDLES = "stream:candles_collected"
 
 # 스트림 최대 길이 (approximate trim)
 _MAXLEN = 1000

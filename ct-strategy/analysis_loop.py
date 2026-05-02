@@ -1,10 +1,9 @@
-"""분석 루프 — 10초 주기: ct-api 봉 조회 → 지표/SR/패턴 계산 → 스냅샷 저장 → 전략 평가."""
+"""분석 루프 — candles_collected 이벤트 구독 → 지표/SR/패턴 계산 → 스냅샷 저장 → 전략 평가."""
 
 from __future__ import annotations
 
-import asyncio
 import logging
-from datetime import UTC, datetime
+from typing import Any
 
 import pandas as pd
 from analysis.indicators import compute_all
@@ -13,10 +12,12 @@ from analysis.signal_generator import evaluate as evaluate_signal
 from analysis.support_resistance import analyze as analyze_sr
 from infra.api.candle import get_candles
 from infra.api.indicator_snapshot import upsert_indicator_snapshot
-from infra.api.tracked_asset import get_active_markets
-from utils.config import TF_PERIODS, Settings
+from infra.redis_stream import STREAM_CANDLES, stream_consume
+from utils.config import Settings
 
 logger = logging.getLogger(__name__)
+
+_GROUP = "strategy-group"
 
 
 # ---------------------------------------------------------------------------
@@ -111,59 +112,37 @@ async def _analyze_market(
 # ---------------------------------------------------------------------------
 
 async def analysis_loop(settings: Settings) -> None:
-    """분석 루프 (10초 주기).
+    """분석 루프 — candles_collected 스트림 구독.
 
-    ct-api에서 봉을 조회하여 지표/SR/패턴을 계산하고 스냅샷을 저장한다.
-    15m 분석 완료 시 전략 평가를 직접 호출한다.
+    ct-worker가 봉 수집 완료 시 발행하는 이벤트를 수신하여
+    해당 market+timeframe만 분석한다.
     """
-    logger.info("analysis_loop: 시작")
+    logger.info("analysis_loop: 시작 (event-driven)")
 
     from strategy.strategy_scheduler import handle_analysis_complete
 
     # 중복 분석 방지: (market, timeframe) → 마지막 분석 open_at
     last_open_at: dict[tuple[str, str], str | None] = {}
 
-    try:
-        while True:
-            tick_start = datetime.now(UTC)
+    async def handler(data: dict[str, Any]) -> None:
+        market = data.get("market", "")
+        tf = data.get("timeframe", "")
+        if not market or not tf:
+            return
 
-            # 활성 마켓 조회
-            try:
-                assets = await get_active_markets()
-                markets = [a["market"] for a in assets] if assets else []
-            except Exception:
-                logger.exception("analysis: 마켓 조회 실패")
-                markets = []
+        key = (market, tf)
+        try:
+            new_open_at = await _analyze_market(market, tf, last_open_at.get(key))
+            if new_open_at:
+                last_open_at[key] = new_open_at
 
-            # 분석: ct-api 봉 조회 → 지표/신호 저장
-            for tf in TF_PERIODS:
-                for market in markets:
-                    key = (market, tf)
+                # 15m 분석 완료 → 전략 평가 직접 호출
+                if tf == "15m":
                     try:
-                        new_open_at = await _analyze_market(
-                            market, tf, last_open_at.get(key),
-                        )
-                        if new_open_at:
-                            last_open_at[key] = new_open_at
-
-                            # 15m 분석 완료 → 전략 평가 직접 호출
-                            if tf == "15m":
-                                try:
-                                    await handle_analysis_complete(
-                                        market, tf, settings,
-                                    )
-                                except Exception:
-                                    logger.exception(
-                                        "전략 평가 실패: %s %s", market, tf,
-                                    )
+                        await handle_analysis_complete(market, tf, settings)
                     except Exception:
-                        logger.exception("분석 실패: %s %s", market, tf)
+                        logger.exception("전략 평가 실패: %s %s", market, tf)
+        except Exception:
+            logger.exception("분석 실패: %s %s", market, tf)
 
-            # 다음 틱까지 대기 (10초 주기)
-            elapsed = (datetime.now(UTC) - tick_start).total_seconds()
-            await asyncio.sleep(max(0.0, 10.0 - elapsed))
-
-    except asyncio.CancelledError:
-        pass
-    finally:
-        logger.info("analysis_loop: 종료")
+    await stream_consume(STREAM_CANDLES, _GROUP, "strategy-1", handler)

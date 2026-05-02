@@ -4,4 +4,4 @@ FROM autocoin-base:latest
 COPY shared/ ./
 COPY ct-strategy/ ./
 
-CMD ["python", "strategy.py"]
+CMD ["python", "main.py"]

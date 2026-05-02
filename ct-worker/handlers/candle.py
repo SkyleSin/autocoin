@@ -9,6 +9,7 @@ from typing import Any
 from bithumb.candle import BithumbCandle
 from infra.api.candle import upsert_candles
 from infra.redis_candle import save_candles_1m
+from infra.redis_stream import STREAM_CANDLES, stream_publish
 from utils.config import Settings
 
 logger = logging.getLogger(__name__)
@@ -77,6 +78,8 @@ async def handle_collect_candles(payload: dict, settings: Settings) -> None:
 
     await upsert_candles(candles)
     logger.info("collect_candles: %s %s → %d봉 저장", market, timeframe, len(candles))
+
+    await stream_publish(STREAM_CANDLES, {"market": market, "timeframe": timeframe})
 
 
 # ---------------------------------------------------------------------------
