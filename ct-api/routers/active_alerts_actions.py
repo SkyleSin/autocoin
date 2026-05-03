@@ -50,7 +50,7 @@ async def acted(
     return {"updated": updated}
 
 
-@actions_router.delete("")
+@actions_router.delete("/remove")
 async def remove(
     db: Annotated[AsyncSession, Depends(get_db)],
     market: Annotated[str, Query()],

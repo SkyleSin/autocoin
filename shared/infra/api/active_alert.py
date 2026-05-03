@@ -45,6 +45,6 @@ async def mark_alert_acted(market: str, *, user_id: int | None = None) -> dict:
 
 async def delete_alerts(market: str, timeframe: str) -> None:
     await api_delete(
-        "/api/active-alerts",
+        "/api/active-alerts/remove",
         params={"market": market, "timeframe": timeframe},
     )
