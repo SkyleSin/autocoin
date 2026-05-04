@@ -94,16 +94,22 @@ async def _handle_signal(data: dict[str, Any], settings: Settings) -> None:
     # 포트폴리오 조회
     krw_balance = 0.0
     coin_balance = 0.0
+    total_capital = 0.0
     coin_currency = market.split("-")[1] if "-" in market else ""
 
     if user_id:
         portfolio = await get_user_portfolio(user_id)
         for item in portfolio:
             bal = float(item.get("balance", 0))
-            if item["currency"] == "KRW":
+            currency = item.get("currency", "")
+            if currency == "KRW":
                 krw_balance = bal
-            elif item["currency"] == coin_currency:
-                coin_balance = bal
+                total_capital += bal
+            else:
+                if currency == coin_currency:
+                    coin_balance = bal
+                avg_price = float(item.get("avg_buy_price", 0))
+                total_capital += bal * avg_price
 
     confidence = data.get("confidence", 0.0)
     indicators = data.get("indicators") or {}
@@ -122,11 +128,14 @@ async def _handle_signal(data: dict[str, Any], settings: Settings) -> None:
             indicators=indicators,
             max_per_trade_pct=max_per_trade,
         )
-        amount_krw = round(available_krw * (buy_rec.allocation_pct / 100), 0)
+        # 전체 자본금 기준으로 목표 금액 산출, 가용 KRW로 제한
+        target_amount = total_capital * (buy_rec.allocation_pct / 100)
+        amount_krw = round(min(target_amount, available_krw), 0)
 
         data["buy_allocation_pct"] = buy_rec.allocation_pct
         data["buy_amount_krw"] = amount_krw
         data["krw_balance"] = krw_balance
+        data["total_capital"] = total_capital
         data["sizing_adjustments"] = buy_rec.adjustments
 
         if amount_krw < 5000:
@@ -141,8 +150,9 @@ async def _handle_signal(data: dict[str, Any], settings: Settings) -> None:
             return
 
         logger.info(
-            "advisor: %s BUY %.1f%% = %d원 (가용: %d원)",
-            market, buy_rec.allocation_pct, amount_krw, available_krw,
+            "advisor: %s BUY %.1f%% = %d원 (자본: %d원, 가용: %d원)",
+            market, buy_rec.allocation_pct, amount_krw,
+            total_capital, available_krw,
         )
 
     elif signal_type == "SELL":
