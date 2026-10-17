@@ -1,4 +1,4 @@
-"""Redis 기반 매매 Job 큐 — List(즉시) + Sorted Set(지연)."""
+"""Redis 기반 Worker Job 큐 — List(즉시) + Sorted Set(지연)."""
 
 from __future__ import annotations
 
@@ -10,27 +10,27 @@ from infra.redis_client import get_redis
 
 logger = logging.getLogger(__name__)
 
-TRADE_QUEUE_KEY = "trade_jobs"
+WORKER_QUEUE_KEY = "worker_jobs"
 DELAYED_QUEUE_KEY = "delayed_jobs"
 
 
-async def push_trade_job(job_data: dict) -> None:
-    """Redis List에 매매 Job push (LPUSH)."""
+async def push_worker_job(job_data: dict) -> None:
+    """Redis List에 Worker Job push (LPUSH)."""
     r = get_redis()
     payload = json.dumps(job_data, ensure_ascii=False)
-    await r.lpush(TRADE_QUEUE_KEY, payload)
-    logger.debug("push_trade_job: %s", job_data.get("type"))
+    await r.lpush(WORKER_QUEUE_KEY, payload)
+    logger.debug("push_worker_job: %s", job_data.get("type"))
 
 
-async def pop_trade_job(timeout: int = 5) -> dict | None:
-    """Redis List에서 매매 Job pop (BRPOP). timeout초 대기."""
+async def pop_worker_job(timeout: int = 5) -> dict | None:
+    """Redis List에서 Worker Job pop (BRPOP). timeout초 대기."""
     r = get_redis()
-    result = await r.brpop(TRADE_QUEUE_KEY, timeout=timeout)
+    result = await r.brpop(WORKER_QUEUE_KEY, timeout=timeout)
     if result is None:
         return None
     _, raw = result
     data: dict = json.loads(raw)
-    logger.debug("pop_trade_job: %s", data.get("type"))
+    logger.debug("pop_worker_job: %s", data.get("type"))
     return data
 
 

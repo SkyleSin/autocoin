@@ -10,3 +10,8 @@ dist/
 build/
 log/
 scripts/backtest/charts/
+.backtest_cache/
+.claude/agent-memory/
+.claude/docs/
+.claude/projects/
+.vscode/

@@ -1,7 +1,7 @@
-# ct-telegram: 텔레그램 봇 수신/발송
+# ct-telegram: 텔레그램 봇 (폴링 + Redis 구독)
 FROM autocoin-base:latest
 
 COPY shared/ ./
-COPY ct-telegram/src/ ./
+COPY ct-telegram/ ./
 
-CMD ["python", "-m", "entrypoints.telegram"]
+CMD ["python", "telegram_main.py"]

@@ -1,10 +1,10 @@
-# ct-api: FastAPI (DDL + 헬스체크)
+# ct-api: FastAPI DB 게이트웨이
 FROM autocoin-base:latest
 
 COPY shared/ ./
-COPY ct-api/src/ ./
+COPY ct-api/ ./
 
-COPY docker/entrypoint.sh /entrypoint.sh
+COPY ct-api/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 EXPOSE 8000

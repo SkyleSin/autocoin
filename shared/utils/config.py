@@ -15,6 +15,15 @@ def project_root() -> Path:
     return Path.cwd()
 
 
+# 봉 수집/분석 대상 타임프레임 → 분 단위 주기 (상위 TF 우선)
+TF_PERIODS: dict[str, int] = {
+    "1d": 1440,
+    "4h": 240,
+    "1h": 60,
+    "15m": 15,
+}
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -76,6 +85,15 @@ class Settings(BaseSettings):
     telegram_chat_id: str = Field(
         default="",
         validation_alias="TELEGRAM_CHAT_ID",
+    )
+
+    master_bot_token: str = Field(
+        default="",
+        validation_alias="MASTER_BOT_TOKEN",
+    )
+    master_telegram_id: str = Field(
+        default="",
+        validation_alias="MASTER_TELEGRAM_ID",
     )
 
     ollama_base_url: str = Field(

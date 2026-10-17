@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from infra.api_client import api_get, api_patch, api_post
+from infra.api_client import api_delete, api_get, api_patch, api_post
 
 
 async def create_signal(data: dict) -> dict:
@@ -37,6 +37,21 @@ async def close_opposite_signals(
             "exit_price": exit_price,
         },
     )
+
+
+async def cleanup_hold_signals(days: int = 7) -> None:
+    """7일 이상 오래된 HOLD 시그널 삭제."""
+    await api_delete("/api/signals/cleanup-hold", params={"days": days})
+
+
+async def get_recent_signals(limit: int = 20, types: str = "BUY,SELL") -> list[dict]:
+    """전체 마켓 최근 시그널."""
+    return await api_get("/api/signals/recent", params={"limit": limit, "types": types})
+
+
+async def get_signal_summary(hours: int = 24) -> dict:
+    """시그널 요약 통계."""
+    return await api_get("/api/signals/summary", params={"hours": hours})
 
 
 async def get_open_signals(

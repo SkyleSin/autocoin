@@ -1,7 +1,7 @@
-# ct-strategy: 유저별 전략 평가 + 시그널
+# ct-strategy: 분석 + 전략 + safety/shock 판단
 FROM autocoin-base:latest
 
 COPY shared/ ./
-COPY ct-strategy/src/ ./
+COPY ct-strategy/ ./
 
-CMD ["python", "-m", "entrypoints.strategy"]
+CMD ["python", "main.py"]

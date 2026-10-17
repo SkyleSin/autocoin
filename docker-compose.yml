@@ -1,14 +1,17 @@
-# base 이미지 빌드: docker build -f docker/Dockerfile.base -t autocoin-base .
+# 의존성 베이스: docker build -f docker/Dockerfile.base -t autocoin-base .
+# 소스 코드는 볼륨 마운트 — 코드 수정 시 재시작만으로 반영
+name: autocoin-v2
 services:
   # ── 인프라 ──
   ct-db:
+    restart: unless-stopped
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-autocoin}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-autocoin}
-      POSTGRES_DB: ${POSTGRES_DB:-autocoin}
+      POSTGRES_DB: ${POSTGRES_DB:-autocoin_v2}
     volumes:
-      - /cache/autocoin/pgdata:/var/lib/postgresql/data
+      - /cache/autocoin/pgdata_v2:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
@@ -17,13 +20,14 @@ services:
     networks:
       - internal
     ports:
-      - "${POSTGRES_PUBLISH_PORT:-5432}:5432"
+      - "${POSTGRES_PUBLISH_PORT:-5433}:5432"
 
   ct-redis:
+    restart: unless-stopped
     image: redis:7-alpine
     command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
     volumes:
-      - /cache/autocoin/redis:/data
+      - /cache/autocoin/redis_v2:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -32,25 +36,30 @@ services:
     networks:
       - internal
 
-  # ── 서비스 ──
+  # ── ct-api: DB gateway ──
   ct-api:
-    build:
-      context: .
-      dockerfile: ct-api/Dockerfile
+    restart: unless-stopped
+    image: autocoin-base
+    working_dir: /src/ct-api
     environment:
-      POSTGRES_INTERNAL_HOST: ${POSTGRES_INTERNAL_HOST:-ct-db}
-      DATABASE_URL: ${DATABASE_URL_DOCKER:-postgresql+asyncpg://${POSTGRES_USER:-autocoin}:${POSTGRES_PASSWORD:-autocoin}@${POSTGRES_INTERNAL_HOST:-ct-db}:5432/${POSTGRES_DB:-autocoin}}
-      API_HOST: ${API_HOST:-0.0.0.0}
-      API_PORT: ${API_PORT:-8000}
+      PYTHONPATH: /src/shared:/src/ct-api
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-autocoin}:${POSTGRES_PASSWORD:-autocoin}@ct-db:5432/${POSTGRES_DB:-autocoin_v2}
+      API_HOST: 0.0.0.0
+      API_PORT: "8000"
       REDIS_URL: redis://ct-redis:6379/0
       ENCRYPT_KEY: ${ENCRYPT_KEY}
+      MASTER_BOT_TOKEN: ${MASTER_BOT_TOKEN}
+      MASTER_TELEGRAM_ID: ${MASTER_TELEGRAM_ID}
     env_file:
       - path: .env
         required: false
     volumes:
-      - ./log:/app/log
+      - ./shared:/src/shared:ro
+      - ./ct-api:/src/ct-api:ro
+      - ./log_v2:/app/log
+    command: uvicorn app:app --host 0.0.0.0 --port 8000 --reload
     ports:
-      - "${API_PUBLISH_PORT:-8000}:${API_PORT:-8000}"
+      - "${API_PUBLISH_PORT:-8001}:8000"
     depends_on:
       ct-db:
         condition: service_healthy
@@ -59,45 +68,54 @@ services:
     networks:
       - internal
 
+  # ── ct-scheduler: 시간 기반 트리거 전용 ──
   ct-scheduler:
-    build:
-      context: .
-      dockerfile: ct-scheduler/Dockerfile
+    restart: unless-stopped
+    image: autocoin-base
+    working_dir: /src/ct-scheduler
+    environment:
+      PYTHONPATH: /src/shared:/src/ct-scheduler
+      API_BASE_URL: http://ct-api:8000
+      REDIS_URL: redis://ct-redis:6379/0
+      MASTER_TELEGRAM_ID: ${MASTER_TELEGRAM_ID}
     env_file:
       - path: .env
         required: false
+    volumes:
+      - ./shared:/src/shared:ro
+      - ./ct-scheduler:/src/ct-scheduler:ro
+      - ./log_v2:/app/log
+    command: python main.py
+    depends_on:
+      ct-api:
+        condition: service_started
+      ct-redis:
+        condition: service_healthy
+    networks:
+      - internal
+
+  # ── ct-strategy: 분석 + 전략 + safety/shock 판단 ──
+  ct-strategy:
+    restart: unless-stopped
+    image: autocoin-base
+    working_dir: /src/ct-strategy
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-autocoin}:${POSTGRES_PASSWORD:-autocoin}@ct-db:5432/${POSTGRES_DB:-autocoin}
+      PYTHONPATH: /src/shared:/src/ct-strategy
+      API_BASE_URL: http://ct-api:8000
       REDIS_URL: redis://ct-redis:6379/0
-      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
-      BITHUMB_API_KEY: ${BITHUMB_API_KEY}
-      BITHUMB_SECRET_KEY: ${BITHUMB_SECRET_KEY}
       ENCRYPT_KEY: ${ENCRYPT_KEY}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+    env_file:
+      - path: .env
+        required: false
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      - ./log:/app/log
-    depends_on:
-      ct-db:
-        condition: service_healthy
-      ct-redis:
-        condition: service_healthy
-    networks:
-      - internal
-
-  ct-strategy:
-    build:
-      context: .
-      dockerfile: ct-strategy/Dockerfile
-    env_file:
-      - path: .env
-        required: false
-    environment:
-      API_BASE_URL: http://ct-api:8000
-      REDIS_URL: redis://ct-redis:6379/0
-      ENCRYPT_KEY: ${ENCRYPT_KEY}
-    volumes:
-      - ./log:/app/log
+      - ./shared:/src/shared:ro
+      - ./ct-strategy:/src/ct-strategy:ro
+      - ./log_v2:/app/log
+    command: python main.py
     depends_on:
       ct-api:
         condition: service_started
@@ -106,45 +124,82 @@ services:
     networks:
       - internal
 
+  # ── ct-advisor: 리스크 + 포지션 사이징 ──
+  ct-advisor:
+    restart: unless-stopped
+    image: autocoin-base
+    working_dir: /src/ct-advisor
+    environment:
+      PYTHONPATH: /src/shared:/src/ct-advisor
+      API_BASE_URL: http://ct-api:8000
+      REDIS_URL: redis://ct-redis:6379/0
+      ENCRYPT_KEY: ${ENCRYPT_KEY}
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - ./shared:/src/shared:ro
+      - ./ct-advisor:/src/ct-advisor:ro
+      - ./log_v2:/app/log
+    command: python main.py
+    depends_on:
+      ct-api:
+        condition: service_started
+      ct-redis:
+        condition: service_healthy
+    networks:
+      - internal
+
+  # ── ct-worker: 빗썸 API 전담 ──
   ct-worker:
-    build:
-      context: .
-      dockerfile: ct-worker/Dockerfile
+    restart: unless-stopped
+    image: autocoin-base
+    working_dir: /src/ct-worker
+    environment:
+      PYTHONPATH: /src/shared:/src/ct-worker
+      API_BASE_URL: http://ct-api:8000
+      REDIS_URL: redis://ct-redis:6379/0
+      BITHUMB_API_KEY: ${BITHUMB_API_KEY}
+      BITHUMB_SECRET_KEY: ${BITHUMB_SECRET_KEY}
+      BITHUMB_BASE_URL: ${BITHUMB_BASE_URL:-https://api.bithumb.com}
+      ENCRYPT_KEY: ${ENCRYPT_KEY}
     env_file:
       - path: .env
         required: false
-    environment:
-      API_BASE_URL: http://ct-api:8000
-      REDIS_URL: redis://ct-redis:6379/0
-      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-20}
-      ENCRYPT_KEY: ${ENCRYPT_KEY}
     volumes:
-      - ./log:/app/log
+      - ./shared:/src/shared:ro
+      - ./ct-worker:/src/ct-worker:ro
+      - ./log_v2:/app/log
+    command: python worker.py
     depends_on:
       ct-api:
         condition: service_started
       ct-redis:
         condition: service_healthy
-    deploy:
-      replicas: ${WORKER_REPLICAS:-2}
     networks:
       - internal
 
+  # ── ct-telegram: 텔레그램 봇 ──
   ct-telegram:
-    build:
-      context: .
-      dockerfile: ct-telegram/Dockerfile
-    env_file:
-      - path: .env
-        required: false
+    restart: unless-stopped
+    image: autocoin-base
+    working_dir: /src/ct-telegram
     environment:
+      PYTHONPATH: /src/shared:/src/ct-telegram
       API_BASE_URL: http://ct-api:8000
       REDIS_URL: redis://ct-redis:6379/0
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
-      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
+      MASTER_BOT_TOKEN: ${MASTER_BOT_TOKEN}
+      MASTER_TELEGRAM_ID: ${MASTER_TELEGRAM_ID}
       ENCRYPT_KEY: ${ENCRYPT_KEY}
+    env_file:
+      - path: .env
+        required: false
     volumes:
-      - ./log:/app/log
+      - ./shared:/src/shared:ro
+      - ./ct-telegram:/src/ct-telegram:ro
+      - ./log_v2:/app/log
+    command: python telegram_main.py
     depends_on:
       ct-api:
         condition: service_started

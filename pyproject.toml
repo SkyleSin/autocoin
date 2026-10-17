@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "autocoin"
-version = "0.1.0"
-description = "빈 뼈대 — 여기서 다시 설계"
+version = "0.2.0"
+description = "AI 기반 암호화폐 자동매매 시스템"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -23,28 +23,8 @@ dependencies = [
     "cryptography>=42.0",
 ]
 
-[project.scripts]
-autocoin-api = "app:main"
-
 [project.optional-dependencies]
 dev = ["pre-commit", "ruff"]
-
-[tool.hatch.build.targets.wheel]
-packages = [
-  "shared/core",
-  "shared/infra",
-  "shared/job_runner",
-  "shared/bithumb",
-  "shared/models",
-  "shared/services",
-  "shared/utils",
-  "ct-api/src/routers",
-  "ct-api/src/schemas",
-  "ct-telegram/src/telegram",
-]
-
-[tool.hatch.build.targets.wheel.force-include]
-"ct-api/src/app.py" = "app.py"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -1,7 +1,7 @@
-# ct-scheduler: 수집 + 분석 + Safety + 비매매 Job
+# ct-scheduler: 시간 기반 트리거 전용
 FROM autocoin-base:latest
 
 COPY shared/ ./
-COPY ct-scheduler/src/ ./
+COPY ct-scheduler/ ./
 
-CMD ["python", "-m", "entrypoints.scheduler"]
+CMD ["python", "main.py"]

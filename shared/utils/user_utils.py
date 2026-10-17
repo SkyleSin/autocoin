@@ -20,11 +20,4 @@ def get_user_settings_from_dict(
     if secret_key:
         overrides["bithumb_secret_key"] = decrypt(secret_key, encrypt_key)
 
-    if "risk_max_per_trade_pct" in user_data:
-        overrides["risk_max_per_trade_pct"] = user_data["risk_max_per_trade_pct"]
-    if "risk_max_daily_trades" in user_data:
-        overrides["risk_max_daily_trades"] = user_data["risk_max_daily_trades"]
-    if "risk_min_krw_reserve" in user_data:
-        overrides["risk_min_krw_reserve"] = user_data["risk_min_krw_reserve"]
-
     return base_settings.model_copy(update=overrides)

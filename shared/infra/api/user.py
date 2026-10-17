@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from infra.api_client import api_get
+from infra.api_client import api_get, api_put
 
 
 async def get_active_users() -> list[dict]:
@@ -27,3 +27,13 @@ async def get_user(user_id: int) -> dict | None:
 async def get_user_full(user_id: int) -> dict | None:
     """내부 서비스 전용 — 암호화된 API 키 포함."""
     return await api_get(f"/api/users/{user_id}/full")
+
+
+async def get_user_watchlist(user_id: int) -> list[str]:
+    return await api_get(f"/api/users/{user_id}/watchlist")
+
+
+async def update_user_watchlist(user_id: int, watchlist: list[str]) -> list[str]:
+    return await api_put(
+        f"/api/users/{user_id}/watchlist", json={"coin_watchlist": watchlist},
+    )

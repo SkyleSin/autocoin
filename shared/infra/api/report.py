@@ -17,3 +17,7 @@ async def generate_report(
 
 async def generate_detail_report() -> dict:
     return await api_post("/api/reports/generate-detail")
+
+
+async def get_signal_summary(hours: int = 12) -> dict:
+    return await api_post("/api/reports/signal-summary", json={"hours": hours})
