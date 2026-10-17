@@ -4,6 +4,7 @@ name: autocoin-v2
 services:
   # ── 인프라 ──
   ct-db:
+    restart: unless-stopped
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-autocoin}
@@ -22,6 +23,7 @@ services:
       - "${POSTGRES_PUBLISH_PORT:-5433}:5432"
 
   ct-redis:
+    restart: unless-stopped
     image: redis:7-alpine
     command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
     volumes:
@@ -36,6 +38,7 @@ services:
 
   # ── ct-api: DB gateway ──
   ct-api:
+    restart: unless-stopped
     image: autocoin-base
     working_dir: /src/ct-api
     environment:
@@ -67,6 +70,7 @@ services:
 
   # ── ct-scheduler: 시간 기반 트리거 전용 ──
   ct-scheduler:
+    restart: unless-stopped
     image: autocoin-base
     working_dir: /src/ct-scheduler
     environment:
@@ -92,6 +96,7 @@ services:
 
   # ── ct-strategy: 분석 + 전략 + safety/shock 판단 ──
   ct-strategy:
+    restart: unless-stopped
     image: autocoin-base
     working_dir: /src/ct-strategy
     environment:
@@ -121,6 +126,7 @@ services:
 
   # ── ct-advisor: 리스크 + 포지션 사이징 ──
   ct-advisor:
+    restart: unless-stopped
     image: autocoin-base
     working_dir: /src/ct-advisor
     environment:
@@ -146,6 +152,7 @@ services:
 
   # ── ct-worker: 빗썸 API 전담 ──
   ct-worker:
+    restart: unless-stopped
     image: autocoin-base
     working_dir: /src/ct-worker
     environment:
@@ -174,6 +181,7 @@ services:
 
   # ── ct-telegram: 텔레그램 봇 ──
   ct-telegram:
+    restart: unless-stopped
     image: autocoin-base
     working_dir: /src/ct-telegram
     environment:
